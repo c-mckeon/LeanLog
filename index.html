@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title> User Workout Tracker</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
+  <link rel="stylesheet" crossorigin href="./assets/index-Dk4CcSVX.css">
+</head>
+<body>
+  
+  <div class="header" style="display: inline-flex; align-items: center; margin-left: 20px;">
+    <h1 style="margin-right: 20px;  flex-grow: 1;">User Workout Tracker</h1> <!-- Adding right margin to create space between the heading and the button -->
+    <div id="authStatus" class="auth-status" aria-live="polite">
+      <span id="authMessage">Checking login...</span>
+      <a id="authLink" href="http://localhost:3000/login">Log in</a>
+      <a id="demoLink" href="http://localhost:3000/demo">Try demo mode</a>
+    </div>
+    <div style="display: flex;">
+      <div class="col-sm-2" style="margin-left: 90px;">
+        <button type="button" id="validateBtn" class="btn btn-primary" style="width: 120px;background-color: green; border-color: black;">Start clock</button>
+      </div>
+      <div class="col-2 " style="margin-left: 80px; display: none">
+        <button type="button" id="pauseBtn" class="btn btn-primary">Pause</button>
+      </div>
+      <div class="col-2" style="margin-left: 40px; display: none;">
+        <button type="button" id="resetBtn" class="btn btn-primary" style="background-color: red; border: none;">reset</button>
+      </div>
+      
+    </div>
+  </div>
+
+  <div id="settingsMenu" class="settings-menu">
+    <button type="button" id="settingsGearBtn" class="settings-gear-btn" aria-label="Open settings" aria-expanded="false" aria-controls="settingsPanel">⚙</button>
+    <div id="settingsPanel" class="settings-panel hidden" role="menu" aria-label="Site settings">
+      <div class="settings-section-block">
+        <div class="settings-section-title">Workout Builder</div>
+        <label class="settings-label" for="exerciseGroupingSetting">Exercise grouping default</label>
+        <select id="exerciseGroupingSetting" class="form-control form-control-sm settings-select">
+          <option value="frequency">Frequency</option>
+          <option value="category">Category</option>
+        </select>
+      </div>
+
+      <div class="settings-section-block">
+        <div class="settings-section-title">Add and Edit</div>
+      </div>
+
+      <div class="settings-section-block">
+        <div class="settings-section-title">Show Workouts</div>
+      </div>
+
+      <div class="settings-section-block">
+        <div class="settings-section-title">Calendar</div>
+      </div>
+
+      <div class="settings-section-block">
+        <div class="settings-section-title">Progress</div>
+      </div>
+
+      <div class="settings-section-block">
+        <div class="settings-section-title">Volume</div>
+        <label class="settings-checkbox-row" for="showMatrixSetting">
+          <input type="checkbox" id="showMatrixSetting">
+          <span>Show matrix</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="col-sm-2" style="margin-left: 90px; display: none;">
+    <button type="button" id="backupbtn" class="btn btn-primary" style="width: 120px;background-color: green; border-color: black;">backup</button>
+    <div id="passwordPrompt" style="display: none;">
+      <label for="password">Enter Password:</label>
+      <input type="password" id="password" />
+      <button type="button" id="submitPassword">Submit</button>
+      <div id="error" style="color: red;"></div>
+    </div>
+  </div>
+  
+  <!-- Workout Management Section -->
+  <div id="workoutManagement">
+    <div style="margin-left: 20px;"><h2>Start Workout</h2></div>
+   
+    <form id="workoutForm"> 
+      <div class="row p-3">
+        <!-- Exercise Label -->
+        <div class="col-3">
+          <label for="exerciseSelect">Choose Exercise:</label>
+        </div>
+      
+        <!-- Exercise Select Dropdown -->
+        <div class="col-sm-2">
+          <select id="exerciseSelect" class="form-control"></select>
+        </div>
+      
+        <!-- Add Exercise Button -->
+        <div class="col-sm-5">
+          <button type="button" id="addExerciseBtn" class="btn btn-primary">Add</button>
+
+        </div>
+        
+
+      </div>
+    </form>
+  </div>
+
+  <div class="row" id="exerciseList">
+    <!-- List of added exercises will appear here -->
+  </div>
+    
+  <div class="row p-3">
+    <div class="col-sm-2">
+      <button style="width: 135px;" id="saveWorkoutBtn">Save Workout</button>
+    </div>
+  
+    <div class="col-sm-10">
+      <div id="resultsection" class="hidden">
+        <div class="row align-items-center"> <!-- 👈 This aligns input + button vertically centered -->
+          <div class="col-auto">
+            <input type="text" id="lastworkoutresult" class="form-control" placeholder="How did you feel after your workout on [date]?" 
+            style="min-width: 450px; background-color: rgb(247, 216, 221); max-height: 29.2px;">
+          </div>
+          <div class="col-auto">
+            <button type="button" id="savelastworkoutbtn" class="btn" style=" max-height: 29.2px;">➕</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+
+
+  <hr>
+
+  <!-- Add Exercise Section -->
+  <div class="row p-3" id="addExerciseSectiondiv">
+    <!-- Add and Edit Section -->
+    <div class="col-12">
+        <button style="width: 135px;" id="toggleFormBtn">Add and Edit</button>
+        <section id="addExerciseSection" style="margin-top: 10px;" class="hidden">
+          <div id="addExerciseFormWrapper" class="hidden" style="margin-top: 10px;">
+            <form id="addExerciseForm" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                <label for="newExerciseName">Exercise Name:</label>
+                <input type="text" id="newExerciseName" placeholder="Enter exercise name" required>
+                <input type="text" id="newExerciseNote" placeholder="Add exercise note?">
+                <div class="row align-items-center">
+                  <div class="col-auto">
+                    <label for="exerciseCategory">Choose Category:</label>
+                  </div>
+                  <div class="col">
+                    <select id="exerciseCategory" class="form-control"></select>
+                  </div>
+                </div>
+
+                <div class="row align-items-center">
+                  <div class="col-auto">
+                    <label>
+                      <input type="checkbox" id="focusCheckbox"> Focus Areas:
+                    </label>
+                  </div>
+                  <!-- Preserve the focus container here -->
+                  <div class="col" id="focusContainer" style="display: none;">
+                    <select id="focusCategory" multiple class="form-control">
+                      <option value="addNew">Add New</option>
+                    </select>
+                  </div>
+                </div>
+                
+                
+                <button type="button" id="saveNewExerciseBtn">Add Exercise</button>
+            </form>
+          </div>
+            <button style="width: 160px; margin-top: 10px;" id="showeditorbtn" >Workout Editor</button>
+            <button style="width: 160px; margin-top: 10px;" id="showexoeditorbtn" >Exercise Editor</button>
+            <button type="button" id="toggleAddExerciseFormBtn" style="width: 160px; margin-top: 10px;">Add Exercise</button>
+        </section> 
+    </div>
+    <!-- Editor Section (Appears Below) -->
+
+        <div id="workouteditor" >
+            <div id="editorsection" style="margin-top: 10px;" class="hidden">
+                <button type="button" id="workoutPrevBtn">⬅️</button>
+                <button type="button" id="workoutNextBtn">➡️</button>
+                <button type="button" id="addPastExerciseBtn">➕ Add exercise</button>
+                <button type="button" id="saveChangesBtn">💾 Save changes</button>
+                <button type="button" id="deleteWorkoutBtn">🗑️ Delete workout</button>
+                <form id="editForm"></form>
+                <div style="margin-top: 10px; border-left: 10px solid rgb(255, 213, 0); padding-left: 10px;" id="fields"></div>
+            </div>
+        </div>
+        <div style="margin-top: 10px;" class="hidden" id="exerciseeditor" >
+              <!-- Optionally, add a selector for the type if needed -->
+
+
+              <!-- Your exercise management section -->
+              <div id="exoeditorsection">
+                <button type="button" id="saveExoBtn">💾 Save changes</button>
+                <button type="button" id="deleteExoBtn">🗑️ Delete exercise</button><br>
+              <div style="margin-top: 10px; border-left: 10px solid rgb(255, 157, 0); padding-left: 10px;">
+                <div class="mb-2">
+                  <select style="margin-top: 10px;" id="typeSelector">
+                    <option value="exercises">Exercises</option>
+                    <option value="focusareas">Focus Areas</option>
+                  </select>
+  
+                  <!-- Dropdown for selecting a category -->
+                  <select id="categorySelector"></select>
+                  <!-- Dropdown for selecting a specific exercise -->
+                  <select id="exerciseSelector"></select>
+                </div>
+                <div id="exerciseTrackingOptions" style="margin-top: 10px;"></div>
+                <div id="exercisenotessection" style="margin-top: 10px;"></div>
+                <div id="exerciseeditorsection" style="margin-top: 10px;"></div>
+              </div></div>
+
+          </div>
+      </div>
+
+</div>
+
+    
+  <hr>
+
+  <div class="row p-3 hidden" id="showchart">
+    <div class="col-5" id="showchart">
+      <button style="width: 135px;" id="showchartbtn" class="click">Show chart</button>
+      <select id="filter-type" onchange="generatevisuals()">
+        <option value="all">All Days</option>
+      </select>
+      
+      
+    </div>
+    <div id="visuals-container"></div>
+  </div>
+
+
+
+  <div class="row p-3">
+    <div class="col-5" id="showworkouts">
+      <button style="width: 135px;" class="click">Show workouts</button>
+      <select id="workout-year-filter" style="display: none;">
+        <option value="all">All years</option>
+      </select>
+      
+    </div>
+    <!-- Saved Workouts Section -->
+    <div class="row p-3 hidden" id="savedWorkoutList">
+      <!-- Saved workouts will appear here -->
+    </div>
+  </div>
+
+  <!-- JavaScript -->
+  <script src="js/api-database.js" defer></script>
+  <script src="js/cognito-session.js" defer></script>
+  <script src="js/app.js" defer></script>
+  <script src="js/analytics.js" defer></script>
+  <script src="js/progress.js" defer></script>
+  <script src="js/volume.js" defer></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+  <hr>
+
+  <div class="row p-3">
+    <div class="col-2" id="showcal">
+      <button style="width: 135px;" class="click">Show calendar</button>
+      <select id="calendar-year-filter" style="display: none;">
+        <option value="2025">2025</option>
+        <option value="2026" selected>2026</option>
+      </select>
+    </div>
+    
+    <div id="calendar-container" style="padding-top: 20px; display: none;"></div>
+  </div>
+  
+  <hr>
+
+  
+
+  <div class="row p-3" id="progressdiv">
+    <div class="col-12">
+      <button style="width: 135px;" id="toggleprogressBtn">Show progress</button>
+      <div id="progressarea" class="hidden">
+        <section id="Progress section" style="margin-top: 10px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            <button type="button" id="progressViewE1RM" class="btn btn-sm btn-outline-primary progress-view-btn active" data-view="e1RM">e1RM</button>
+            <button type="button" id="progressViewAvgVolume" class="btn btn-sm btn-outline-primary progress-view-btn" data-view="avg3Volume">Average 3-set volume</button>
+            <button type="button" id="progressViewBestEfforts" class="btn btn-sm btn-outline-primary progress-view-btn" data-view="bestEfforts">Best efforts</button>
+          </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+            <select id="ORMexerciseInput" style="width: 180px;" class="form-control form-control-sm"></select>
+            <input type="number" id="ORMrepsInput" placeholder="Reps (4-6)" class="form-control form-control-sm" style="width:110px;" />
+            <input type="number" id="ORMweightInput" placeholder="Weight (kg)" class="form-control form-control-sm" style="width:110px;" />
+            <button type="button" id="recordE1RMBtn" class="btn btn-sm btn-outline-success">Record max effort set</button>
+            <select id="ORMexerciseDataFilter" style="width: 180px;" class="form-control form-control-sm">
+              <option value="all">All exercises</option>
+            </select>
+            <button type="button" id="showDataButton" class="btn btn-sm btn-outline-secondary">Show Data</button>
+          </div>
+
+          <div id="progressTableWrapper" style="overflow-x:auto; margin-bottom:12px;">
+            <table id="progressTable" class="table table-sm table-bordered" style="min-width:760px; table-layout:fixed;">
+              <thead id="progressTableHead"></thead>
+              <tbody id="progressTableBody"></tbody>
+            </table>
+          </div>
+
+          <ul id="performanceList" class="hidden" style="padding-left:20px; margin-top:10px;"></ul>
+        </section>
+      </div>
+    </div>
+  </div>
+
+
+
+
+
+
+  <style>
+    /* Add styles for the toggle and fields */
+    .sr-fields {
+      display: none;
+      margin-top: 10px;
+    }
+    .sr-fields input {
+      margin: 5px 0;
+    }
+    .hidden {
+      display: none;
+    }
+    /* Workout draft grid styles */
+    
+#exerciseList {
+    width: 100%;
+}
+
+.exercise-item {
+    width: 100%;
+    margin-bottom: 0.5rem;
+    overflow: visible;
+}
+
+.exercise-row {
+    display: grid;
+    grid-template-columns: 220px 500px 210px 200px 72px;
+    gap: 0.75rem;
+    width: max-content;
+    min-width: 1200px;
+    align-items: center;
+    white-space: nowrap;
+}
+
+.exercise-name-col {
+    min-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sets-col {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 500px;
+}
+
+.volume-col {
+    min-width: 210px;
+}
+
+.note-col {
+    min-width: 200px;
+}
+
+.remove-col {
+    min-width: 72px;
+}
+
+.sets-container {
+    width: 100%;
+}
+
+.single-set-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: nowrap;
+}
+
+.single-set-row .set-input {
+    width: 72px;
+    min-width: 72px;
+}
+
+.single-set-row .set-counter {
+    min-width: 48px;
+    text-align: center;
+}
+
+.note-col .form-control {
+    width: 100%;
+    min-width: 160px;
+}
+
+
+/* Allow the actual page to be wider than the viewport */
+html,
+body {
+    overflow-x: auto;
+}
+
+  </style>
+
+<script data-goatcounter="https://workouts.goatcounter.com/count"
+        async src="//gc.zgo.at/count.js"></script>
+
+
+
+
+  <hr>
+
+  <div class="row p-3" id="showvolume">
+    <div class="col-12">
+      <button style="width: 135px;" id="toggleVolumeBtn">Show Volume</button>
+      <div id="volumearea" class="hidden" style="margin-top: 10px;">
+        <section id="Volume section" style="margin-top: 10px;">
+          <div class="volume-header" style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+            <button id="volumePrevMonth" class="btn btn-sm btn-outline-secondary">←</button>
+            <span id="volumeMonthLabel" style="font-weight:600; font-size:1rem;"></span>
+            <button id="volumeNextMonth" class="btn btn-sm btn-outline-secondary">→</button>
+          </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+            <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn active" data-view="sofar">So Far</button>
+            <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="monthly">Monthly</button>
+            <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="coverage">Cov. by month</button>
+          </div>
+
+          <div style="margin-bottom: 12px;">
+            <div id="muscleMatrixArea" class="hidden" style="margin-top: 8px;">
+              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                <button type="button" id="addMuscleGroupBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
+                <button type="button" id="removeMuscleGroupBtn" class="btn btn-sm btn-outline-secondary">Remove muscle group</button>
+                <button type="button" id="addExerciseRowBtn" class="btn btn-sm btn-outline-secondary">Add exercise</button>
+                <button type="button" id="removeExerciseRowBtn" class="btn btn-sm btn-outline-secondary">Remove exercise</button>
+              </div>
+              <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
+                <div style="flex:1 1 480px;">
+                  <div style="overflow-x:auto;">
+                    <table id="muscleMatrixTable" class="table table-sm table-bordered" style="width: auto; max-width: 100%; background:#fff; margin: 0 auto; table-layout: fixed;">
+                      <thead>
+                        <tr id="muscleGroupHeaderRow"></tr>
+                      </thead>
+                      <tbody id="muscleMatrixBody"></tbody>
+                    </table>
+                  </div>
+                </div>
+                <div style="flex:0 0 240px; min-width:220px;">
+                  <div style="font-weight:600; margin-bottom:8px;">Targets</div>
+                  <label class="form-label form-label-sm" for="targetMonthSelect" style="margin-bottom:4px;">Month</label>
+                  <select id="targetMonthSelect" class="form-control form-control-sm"></select>
+                  <div id="targetEditorRows" style="margin-top:8px;"></div>
+                  <button type="button" id="saveTargetsBtn" class="btn btn-sm btn-primary" style="margin-top:8px;">Save targets</button>
+                </div>
+              </div>
+              <button type="button" id="saveMuscleMatrixBtn" class="btn btn-sm btn-primary" style="margin-top: 8px;">Save matrix</button>
+            </div>
+          </div>
+
+          <div id="volumeTableWrapper" style="overflow-x:auto;">
+            <table id="volumeTable" class="table table-sm table-bordered" style="min-width:460px; table-layout:fixed;">
+              <thead>
+                <tr>
+                  <th>Muscle group</th>
+                  <th>Direct Sets</th>
+                  <th>Effective Sets</th>
+                  <th>Target</th>
+                  <th>On Track</th>
+                </tr>
+              </thead>
+              <tbody id="volumeTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

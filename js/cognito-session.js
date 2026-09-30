@@ -1,4 +1,4 @@
-const backendOrigin = window.WORKOUT_BACKEND_ORIGIN || 'http://localhost:3000';
+const backendOrigin = window.WORKOUT_BACKEND_ORIGIN || 'https://lean-backend.agreeableplant-a51f439e.northeurope.azurecontainerapps.io';
 const authMessage = document.getElementById('authMessage');
 const authLink = document.getElementById('authLink');
 const demoLink = document.getElementById('demoLink');

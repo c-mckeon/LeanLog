@@ -210,7 +210,7 @@ function getWorkoutDraftRef() {
 
 // Current workout intensity
 let currentWorkout = { intensity: '', intensityNote: '' };
-const workoutApiOrigin = window.WORKOUT_BACKEND_ORIGIN || 'http://localhost:3000';
+const workoutApiOrigin = window.WORKOUT_BACKEND_ORIGIN || 'https://lean-backend.agreeableplant-a51f439e.northeurope.azurecontainerapps.io';
 
 // Toggle focus area selection visibility
 focusCheckbox.addEventListener('change', () => {

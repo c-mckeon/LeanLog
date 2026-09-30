@@ -1,4 +1,4 @@
-const apiBackendOrigin = window.WORKOUT_BACKEND_ORIGIN || 'http://localhost:3000';
+const apiBackendOrigin = window.WORKOUT_BACKEND_ORIGIN || 'https://lean-backend.agreeableplant-a51f439e.northeurope.azurecontainerapps.io';
 
 class ApiSnapshot {
   constructor(value, key = null) {

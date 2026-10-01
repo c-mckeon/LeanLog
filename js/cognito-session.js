@@ -8,7 +8,7 @@ function renderAuthStatus(authenticated, user, demo) {
 
   if (authenticated) {
     authMessage.textContent = demo
-      ? 'Demo mode (read-only)'
+      ? (window.LOCAL_DEMO_MODE ? 'Local demo mode (editable)' : 'Demo mode (read-only)')
       : `Signed in as ${user.email || user.username || 'workout user'}`;
     authLink.textContent = 'Log out';
     authLink.href = `${backendOrigin}/logout`;
@@ -44,4 +44,6 @@ async function loadAuthStatus() {
   }
 }
 
+if (authLink) authLink.href = `${backendOrigin}/login`;
+if (demoLink) demoLink.href = `${backendOrigin}/demo`;
 loadAuthStatus();

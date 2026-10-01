@@ -153,6 +153,10 @@ document.addEventListener('DOMContentLoaded', () => {
 //-////////////////////////////////////////////////////////////////////////// Creating exercises, editing workouts, exercise list
 // DOM Elements
 const exerciseSelect = document.getElementById('exerciseSelect');
+const exercisePicker = document.getElementById('exercisePicker');
+const exercisePickerTrigger = document.getElementById('exercisePickerTrigger');
+const exercisePickerMenu = document.getElementById('exercisePickerMenu');
+const exercisePickerOptions = document.getElementById('exercisePickerOptions');
 const addExerciseBtn = document.getElementById('addExerciseBtn');
 const exerciseList = document.getElementById('exerciseList');
 const saveWorkoutBtn = document.getElementById('saveWorkoutBtn');
@@ -167,14 +171,118 @@ const addExerciseFormWrapper = document.getElementById('addExerciseFormWrapper')
 const toggleAddExerciseFormBtn = document.getElementById('toggleAddExerciseFormBtn');
 const settingsGearBtn = document.getElementById('settingsGearBtn');
 const settingsPanel = document.getElementById('settingsPanel');
-const exerciseGroupingSettingSelect = document.getElementById('exerciseGroupingSetting');
+const exerciseGroupingModeButtons = document.querySelectorAll('[data-grouping-mode]');
+
+function setExercisePickerOpen(isOpen) {
+  if (!exercisePickerMenu || !exercisePickerTrigger) return;
+  exercisePickerMenu.hidden = !isOpen;
+  exercisePickerTrigger.setAttribute('aria-expanded', String(isOpen));
+}
+
+if (exercisePickerTrigger) {
+  exercisePickerTrigger.addEventListener('click', () => {
+    setExercisePickerOpen(exercisePickerMenu.hidden);
+  });
+
+  document.addEventListener('click', (event) => {
+    if (exercisePicker && !exercisePicker.contains(event.target)) setExercisePickerOpen(false);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && exercisePickerMenu && !exercisePickerMenu.hidden) {
+      setExercisePickerOpen(false);
+      exercisePickerTrigger.focus();
+    }
+  });
+}
+
+function renderExercisePickerOptions() {
+  if (!exercisePickerOptions) return;
+
+  exercisePickerOptions.replaceChildren();
+  Array.from(exerciseSelect.children).forEach((entry) => {
+    const options = entry.tagName === 'OPTGROUP' ? Array.from(entry.children) : [entry];
+    const validOptions = options.filter((option) => option.value);
+    if (!validOptions.length) return;
+
+    if (entry.tagName === 'OPTGROUP') {
+      const heading = document.createElement('div');
+      heading.className = 'exercise-picker-category';
+      heading.textContent = entry.label;
+      exercisePickerOptions.appendChild(heading);
+    }
+
+    validOptions.forEach((option) => {
+      const choice = document.createElement('button');
+      choice.type = 'button';
+      choice.className = 'exercise-picker-option';
+      choice.textContent = option.textContent;
+      choice.addEventListener('click', () => {
+        exerciseSelect.value = option.value;
+        exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = option.textContent;
+        setExercisePickerOpen(false);
+        exercisePickerTrigger.focus();
+      });
+      exercisePickerOptions.appendChild(choice);
+    });
+  });
+}
+
+const sectionVisibilityTargets = {
+  addEdit: ['#addEditSection'],
+  workouts: ['#showWorkoutsSection'],
+  calendar: ['#calendarSection'],
+  progress: ['#progressdiv'],
+  volume: ['#showvolume']
+};
+
+function setSectionIncluded(sectionName, included) {
+  (sectionVisibilityTargets[sectionName] || []).forEach((selector) => {
+    document.querySelectorAll(selector).forEach((element) => {
+      element.classList.toggle('section-disabled', !included);
+    });
+  });
+}
+
+async function loadSectionVisibilitySettings() {
+  try {
+    const snapshot = await database.ref('settings/sections').once('value');
+    const savedSections = snapshot.val() || {};
+
+    Object.keys(sectionVisibilityTargets).forEach((sectionName) => {
+      const checkbox = document.querySelector(`[data-section-setting="${sectionName}"]`);
+      const included = savedSections[sectionName] !== false;
+      if (checkbox) checkbox.checked = included;
+      setSectionIncluded(sectionName, included);
+    });
+  } catch (error) {
+    console.error('Error loading section settings:', error);
+  }
+}
+
+Object.keys(sectionVisibilityTargets).forEach((sectionName) => {
+  const checkbox = document.querySelector(`[data-section-setting="${sectionName}"]`);
+  if (!checkbox) return;
+
+  checkbox.addEventListener('change', async () => {
+    const included = checkbox.checked;
+    setSectionIncluded(sectionName, included);
+
+    try {
+      await database.ref('settings/sections').update({ [sectionName]: included });
+    } catch (error) {
+      console.error('Error saving section settings:', error);
+    }
+  });
+});
+
+loadSectionVisibilitySettings();
 
 const EXERCISE_GROUPING_MODE = {
   FREQUENCY: 'frequency',
   CATEGORY: 'category'
 };
-const EXERCISE_GROUPING_TOGGLE_VALUE = '__toggle_exercise_grouping__';
-const DEFAULT_EXERCISE_CATEGORIES = ['Activity', 'Legs', 'Core', 'Upper-Body Pull'];
+const DEFAULT_EXERCISE_CATEGORIES = ['Legs', 'Core', 'Upper-Body Pull'];
 let workoutBuilderGroupingMode = EXERCISE_GROUPING_MODE.FREQUENCY;
 let exerciseCategories = [];
 
@@ -499,10 +607,6 @@ addExerciseBtn.addEventListener('click', () => {
     const exerciseId = selectedOption.value;
     const exerciseName = selectedOption.text;
 
-  if (exerciseId === EXERCISE_GROUPING_TOGGLE_VALUE) {
-    return;
-  }
-
     if (!exerciseId || selectedExercises.some(e => e.id === exerciseId)) {
         alert("Exercise already exists");
         return;
@@ -562,9 +666,11 @@ function setWorkoutBuilderGroupingMode(nextMode, persist = false) {
 
   workoutBuilderGroupingMode = normalizedMode;
 
-  if (exerciseGroupingSettingSelect && exerciseGroupingSettingSelect.value !== normalizedMode) {
-    exerciseGroupingSettingSelect.value = normalizedMode;
-  }
+  exerciseGroupingModeButtons.forEach((button) => {
+    const selected = button.dataset.groupingMode === normalizedMode;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-pressed', String(selected));
+  });
 
   if (!persist) return Promise.resolve();
 
@@ -573,15 +679,6 @@ function setWorkoutBuilderGroupingMode(nextMode, persist = false) {
     .catch((error) => {
       console.error('Error saving workout builder settings:', error);
     });
-}
-
-function createExerciseGroupingToggleOption() {
-  const toggleOption = document.createElement('option');
-  toggleOption.value = EXERCISE_GROUPING_TOGGLE_VALUE;
-  toggleOption.textContent = workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.CATEGORY
-    ? 'Grouping: Category (select to switch to Frequency)'
-    : 'Grouping: Frequency (select to switch to Category)';
-  return toggleOption;
 }
 
 async function loadWorkoutBuilderSettings() {
@@ -630,6 +727,7 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
 
   // Clear existing options
   exerciseSelect.innerHTML = "";
+  exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = 'Select Exercise';
 
   // Add default placeholder option
   const placeholderOption = document.createElement("option");
@@ -638,11 +736,11 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
   placeholderOption.disabled = true;
   placeholderOption.selected = true;
   exerciseSelect.appendChild(placeholderOption);
-  exerciseSelect.appendChild(createExerciseGroupingToggleOption());
 
   // Check if exercises exist and are valid
   if (!exercises || typeof exercises !== "object" || Object.keys(exercises).length === 0) {
     console.warn("⚠️ WARNING: No exercises found! Dropdown will be empty.");
+    renderExercisePickerOptions();
     return;
   }
 
@@ -729,26 +827,15 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
     });
   }
 
+  renderExercisePickerOptions();
   console.log("✅ Dropdown updated successfully.");
 }
 
-if (exerciseGroupingSettingSelect) {
-  exerciseGroupingSettingSelect.addEventListener('change', async () => {
-    const nextMode = exerciseGroupingSettingSelect.value;
-    await setWorkoutBuilderGroupingMode(nextMode, true);
+exerciseGroupingModeButtons.forEach((button) => {
+  button.addEventListener('click', async () => {
+    await setWorkoutBuilderGroupingMode(button.dataset.groupingMode, true);
     loadExercises();
   });
-}
-
-exerciseSelect.addEventListener('change', async () => {
-  if (exerciseSelect.value !== EXERCISE_GROUPING_TOGGLE_VALUE) return;
-
-  const nextMode = workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.CATEGORY
-    ? EXERCISE_GROUPING_MODE.FREQUENCY
-    : EXERCISE_GROUPING_MODE.CATEGORY;
-
-  await setWorkoutBuilderGroupingMode(nextMode, true);
-  loadExercises();
 });
 
 
@@ -2005,7 +2092,7 @@ function checkLastWorkoutResult() {
         const workoutKey = child.key;
 
         // Only show if result is missing or empty
-        if (!workout.result || workout.result.trim() === '') {
+        if (!String(workout.result || '').trim()) {
           const date = workout.date || 'recently';
           const input = document.getElementById('lastworkoutresult');
           const resultSection = document.getElementById('resultsection');
@@ -2019,9 +2106,9 @@ function checkLastWorkoutResult() {
   });
 }
 
-function savelastworkoutresult() {
+async function savelastworkoutresult() {
   const input = document.getElementById('lastworkoutresult');
-  const workoutKey = input.dataset.key;
+  const workoutKey = input?.dataset.key;
   const result = input.value.trim();
 
   if (!result) {
@@ -2029,16 +2116,21 @@ function savelastworkoutresult() {
     return;
   }
 
-  const workoutRef = database.ref('workouts/' + workoutKey);
-  workoutRef.update({ result: result }, (error) => {
-    if (error) {
-      console.error('Error saving result:', error);
-    } else {
-      document.getElementById('resultsection').classList.add('hidden');
-    }
-  });
+  if (!workoutKey) {
+    alert('There is no recent workout to update.');
+    return;
+  }
+
+  try {
+    await database.ref(`workouts/${workoutKey}`).update({ result });
+    document.getElementById('resultsection')?.classList.add('hidden');
+  } catch (error) {
+    console.error('Error saving result:', error);
+    alert('Could not save how you felt. Please try again.');
+  }
 }
 
+document.getElementById('savelastworkoutbtn')?.addEventListener('click', savelastworkoutresult);
 
 
 

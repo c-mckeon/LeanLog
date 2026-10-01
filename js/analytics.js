@@ -92,6 +92,23 @@ document.getElementById("showcal").querySelector("button").addEventListener("cli
   }
 });
 
+function populateCalendarYearSelector() {
+  const yearSelector = document.getElementById('calendar-year-filter');
+  const currentYear = new Date().getFullYear();
+  if (!yearSelector) return;
+
+  yearSelector.replaceChildren();
+  for (let year = currentYear - 5; year <= currentYear + 5; year++) {
+    const option = document.createElement('option');
+    option.value = String(year);
+    option.textContent = String(year);
+    yearSelector.appendChild(option);
+  }
+  yearSelector.value = String(currentYear);
+}
+
+populateCalendarYearSelector();
+
 // Add listener for year selector change
 document.getElementById("calendar-year-filter").addEventListener("change", async function() {
   const year = parseInt(this.value, 10);
@@ -155,6 +172,20 @@ async function runanalytics() {
   }
 }
 
+function getWorkoutDateKey(workout) {
+  const rawDate = workout?.date || workout?.createdAt || workout?.timestamp || workout?.dateString;
+  if (rawDate === null || rawDate === undefined || rawDate === '') return null;
+
+  if (typeof rawDate === 'string') {
+    const explicitDate = rawDate.match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/);
+    if (explicitDate) return explicitDate[1];
+  }
+
+  const parsedDate = new Date(rawDate);
+  if (Number.isNaN(parsedDate.getTime())) return null;
+  return formatCalendarDate(parsedDate);
+}
+
 async function groupWorkoutsByDate() {
   const sourceRef = window.database.ref('/');
 
@@ -163,16 +194,14 @@ async function groupWorkoutsByDate() {
     const sourceSnapshot = await sourceRef.once('value');
     const data = sourceSnapshot.val();
 
-    if (!data || !data.workouts) {
-      console.error('No workouts data available.');
-      return;
-    }
+    if (!data || !data.workouts) return {};
 
     const workouts = Object.values(data.workouts);
 
     return workouts.reduce((acc, workout) => {
-      const date = workout.date;
-      const intensity = workout.intensity;
+      const date = getWorkoutDateKey(workout);
+      if (!date) return acc;
+      const intensity = Number(workout.intensity) || 5;
 
       // Create or update workout entry for the date
       if (!acc[date]) {
@@ -190,6 +219,7 @@ async function groupWorkoutsByDate() {
 
   } catch (error) {
     console.error('Error fetching or processing workouts:', error);
+    return {};
   }
 }
 
@@ -335,28 +365,6 @@ async function generatevisuals() {
 
 
 
-// Function to get the week number and the day of the week (1 = Monday, ..., 7 = Sunday)
-function getWeekAndDay(date) {
-  const startDate = new Date('2026-01-01'); // Week 1 starts on January 1, 2026 (Wednesday)
-
-  // Get the difference in time (in milliseconds)
-  const diffTime = date - startDate;
-  
-  // Calculate the number of days between the start date and the input date
-  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-  
-  // Calculate the week number (adjusted to start from Monday)
-  const weekNumber = Math.ceil((diffDays + 1) / 7);
-  
-  date.setDate(date.getDate() - 1); // Subtract one day from the date
-  let dayOfWeek = date.getDay(); // Get the day of the week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-  
-  // If the day is Sunday (0), set it as 7
-  dayOfWeek = dayOfWeek === 0 ? 7 : dayOfWeek;
-
-  return { weekNumber, dayOfWeek };
-}
-
 // Function to determine the intensity color based on the workout intensity
 function getIntensityColor(intensity) {
   intensity = intensity || 5; // Default intensity is 5 if not provided
@@ -374,28 +382,81 @@ function getIntensityColor(intensity) {
   return 'rgb(255, 255, 255)'; // Default to white
 }
 
-// Function to create the calendar based on workout data
-function isDaylightSavings(date) {
-  const year = date.getFullYear();
-  // DST starts on the second Sunday of March
-  const marchFirstDay = new Date(year, 2, 1).getDay();
-  const secondSundayMarch = 8 + (7 - marchFirstDay);
-  const startDST = new Date(year, 2, secondSundayMarch);
-  
-  // DST ends on the first Sunday of November
-  const novFirstDay = new Date(year, 10, 1).getDay();
-  const firstSundayNov = (7 - novFirstDay) || 7;
-  const endDST = new Date(year, 10, firstSundayNov);
-  
-  return date >= startDST && date < endDST;
+let showWholeYearCalendar = false;
+const showWholeYearSettingButton = document.getElementById('showWholeYearSetting');
+
+function updateShowWholeYearSetting() {
+  if (!showWholeYearSettingButton) return;
+  showWholeYearSettingButton.classList.toggle('active', showWholeYearCalendar);
+  showWholeYearSettingButton.setAttribute('aria-pressed', String(showWholeYearCalendar));
 }
 
+async function loadCalendarSettings() {
+  try {
+    const snapshot = await database.ref('settings/calendar/showWholeYear').once('value');
+    showWholeYearCalendar = snapshot.val() === true;
+    updateShowWholeYearSetting();
+  } catch (error) {
+    console.error('Error loading calendar settings:', error);
+  }
+}
 
-async function createCalendar(year = 2026) {
+if (showWholeYearSettingButton) {
+  showWholeYearSettingButton.addEventListener('click', async () => {
+    const previousValue = showWholeYearCalendar;
+    showWholeYearCalendar = !showWholeYearCalendar;
+    updateShowWholeYearSetting();
+
+    try {
+      await database.ref('settings/calendar/showWholeYear').set(showWholeYearCalendar);
+      const calendarContainer = document.getElementById('calendar-container');
+      if (calendarContainer && calendarContainer.style.display !== 'none') {
+        const selectedYear = Number(document.getElementById('calendar-year-filter').value);
+        await createCalendar(selectedYear);
+      }
+    } catch (error) {
+      showWholeYearCalendar = previousValue;
+      updateShowWholeYearSetting();
+      console.error('Error saving calendar settings:', error);
+    }
+  });
+}
+
+loadCalendarSettings();
+
+function getCalendarEndDate(year, today = new Date()) {
+  const yearEnd = new Date(year, 11, 31);
+  if (showWholeYearCalendar || year !== today.getFullYear()) return yearEnd;
+
+  const daysUntilSunday = (7 - today.getDay()) % 7;
+  const endOfFollowingWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() + daysUntilSunday + 7);
+  return endOfFollowingWeek < yearEnd ? endOfFollowingWeek : yearEnd;
+}
+
+function formatCalendarDate(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getCalendarWeekStart(date) {
+  const weekStart = new Date(date);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  return weekStart;
+}
+
+function isSameCalendarWeek(firstDate, secondDate) {
+  return formatCalendarDate(getCalendarWeekStart(firstDate)) === formatCalendarDate(getCalendarWeekStart(secondDate));
+}
+
+async function createCalendar(year = new Date().getFullYear()) {
   // Assume workoutsByDate is generated by the groupWorkoutsByDate function
   const workoutsByDate = await groupWorkoutsByDate();
 
   const container = document.getElementById("calendar-container");
+  if (!container) return;
 
   // Create the table header
   const headerRow = `
@@ -411,103 +472,57 @@ async function createCalendar(year = 2026) {
     </tr>
   `;
 
-  let rows = "";
+  let rows = '';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayString = formatCalendarDate(today);
+  const firstOfYear = new Date(year, 0, 1);
+  const firstWeekStart = getCalendarWeekStart(firstOfYear);
+  const lastVisibleDate = getCalendarEndDate(year, today);
 
+  for (let weekNumber = 1, weekStart = new Date(firstWeekStart);
+    weekStart <= lastVisibleDate;
+    weekNumber++, weekStart.setDate(weekStart.getDate() + 7)) {
+    let row = `<tr><td>Week ${weekNumber}</td>`;
 
-// Define the common border styles
-const leftborder = "border-left: 2px solid black;";
-const topborder = "border-top: 2px solid black;";
-// Define the dates for the respective borders (will be dynamically generated)
-const leftdates = [];
-const topdates = [];
+    for (let day = 0; day < 7; day++) {
+      const currentDate = new Date(weekStart);
+      currentDate.setDate(weekStart.getDate() + day);
+      const dateString = formatCalendarDate(currentDate);
 
-for (let month = 1; month <= 12; month++) {
-  leftdates.push(`${year}-${String(month).padStart(2, '0')}-02`);
-}
-
-for (let month = 1; month <= 12; month++) {
-  const firstDay = new Date(year, month - 1, 1);
-  const startDay = firstDay.getDay() === 0 ? 7 : firstDay.getDay();
-  const daysInMonth = new Date(year, month, 0).getDate();
-  
-  // Get start of week (Monday) for the first day of the month
-  for (let d = 2; d <= Math.min(8, daysInMonth); d++) {
-    topdates.push(`${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`);
-  }
-}
-
-// Generate the customBorders object dynamically
-const customBorders = leftdates.reduce((acc, date) => {
-  acc[date] = leftborder;  // Apply the left border for leftdates
-  return acc;
-}, {});
-
-// Add top borders to the customBorders object for topdates, combining with existing borders
-topdates.forEach(date => {
-  // If the date already has a left border, append the top border to it, otherwise just set the top border
-  if (customBorders[date]) {
-    customBorders[date] += ` ${topborder}`;
-  } else {
-    customBorders[date] = topborder;
-  }
-});
-
-
-
-  
-
-  for (let i = 1; i <= 52; i++) {
-    // Create each row for the week
-    let row = `<tr><td>Week ${i}</td>`;
-
-    for (let day = 1; day <= 7; day++) { // Days of the week: 1 = Monday, ..., 7 = Sunday
-      const currentDate = new Date(`${year}-01-01`);
-      currentDate.setDate(currentDate.getDate() + (i - 1) * 7 + (day - 1)); // Calculate the exact date for this cell
-
-      // Adjust the day by subtracting 2 days to align everything correctly
-      currentDate.setDate(currentDate.getDate() - 1); // Shift by 1 more day
-
-            // Only for dates during daylight savings summer time, shift one additional day to the previous day.
-            if (isDaylightSavings(currentDate)) {
-              currentDate.setDate(currentDate.getDate() +1);
-            }
-
-      const today = new Date();
-      today.setDate(today.getDate() + 1);
-      const currentDateString = currentDate.toISOString().split('T')[0]; // Format the date to YYYY-MM-DD
-      const { weekNumber: todayWeek, dayOfWeek: todayDay } = getWeekAndDay(today);
-      const { weekNumber: cellWeek, dayOfWeek: cellDay } = getWeekAndDay(currentDate);
-
-      // Check if there's a workout for the current date
-      const workoutData = workoutsByDate[currentDate.toISOString().split('T')[0]]; // Get the workout data for this date
-
+      const workoutData = workoutsByDate[dateString];
       let color;
 
-      // Check if today has no workout
-      if (currentDate.toISOString().split('T')[0] === today.toISOString().split('T')[0] && !workoutData) {
-        color = 'rgb(255, 255, 146)'; // Yellow for today if no workout
-      }
-
-      // Check if the current date is a past day with no workout
-      else if (currentDate < today && !workoutData) {
-        color = 'rgb(233, 233, 233)'; // Light grey for past days with no workout
-      }
-      // Use intensity scale if workout data exists
-      else if (workoutData) {
+      if (dateString === todayString && !workoutData) {
+        color = 'rgb(255, 255, 146)';
+      } else if (currentDate < today && !workoutData) {
+        color = 'rgb(233, 233, 233)';
+      } else if (workoutData) {
         color = getIntensityColor(workoutData.maxIntensity);
-      }
-      // Default to white for future days with no workout
-      else {
+      } else {
         color = 'rgb(255, 255, 255)';
       }
 
-      // Apply custom borders if defined
-      const customBorderStyle = customBorders[currentDateString] || "";
-
-      row += `<td style="background-color:${color};border:1px solid grey;${customBorderStyle}"></td>`;
+      const firstOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+      const lastOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+      const monthBorders = [];
+      if (currentDate.getDate() === 1 && currentDate.getDay() !== 1) {
+        monthBorders.push('border-left:2px solid black');
+      }
+      if (currentDate >= firstOfMonth && isSameCalendarWeek(currentDate, firstOfMonth)) {
+        monthBorders.push('border-top:2px solid black');
+      }
+      if (currentDate.getDate() === lastOfMonth.getDate() && currentDate.getDay() !== 0) {
+        monthBorders.push('border-right:2px solid black');
+      }
+      if (currentDate <= lastOfMonth && isSameCalendarWeek(currentDate, lastOfMonth)) {
+        monthBorders.push('border-bottom:2px solid black');
+      }
+      const borderStyle = monthBorders.length ? `${monthBorders.join(';')};` : '';
+      row += `<td data-date="${dateString}" title="${dateString}" style="background-color:${color};border:1px solid grey;${borderStyle}"></td>`;
     }
 
-    row += `</tr>`;
+    row += '</tr>';
     rows += row;
   }
 

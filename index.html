@@ -4,8 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title> User Workout Tracker</title>
+  <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-Dk4CcSVX.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-CkIX7t-V.css">
 </head>
 <body>
   
@@ -34,32 +35,44 @@
     <button type="button" id="settingsGearBtn" class="settings-gear-btn" aria-label="Open settings" aria-expanded="false" aria-controls="settingsPanel">⚙</button>
     <div id="settingsPanel" class="settings-panel hidden" role="menu" aria-label="Site settings">
       <div class="settings-section-block">
-        <div class="settings-section-title">Workout Builder</div>
-        <label class="settings-label" for="exerciseGroupingSetting">Exercise grouping default</label>
-        <select id="exerciseGroupingSetting" class="form-control form-control-sm settings-select">
-          <option value="frequency">Frequency</option>
-          <option value="category">Category</option>
-        </select>
-      </div>
-
-      <div class="settings-section-block">
         <div class="settings-section-title">Add and Edit</div>
+        <label class="settings-checkbox-row" for="includeAddEditSetting">
+          <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked>
+          <span>Include section</span>
+        </label>
       </div>
 
       <div class="settings-section-block">
         <div class="settings-section-title">Show Workouts</div>
+        <label class="settings-checkbox-row" for="includeWorkoutsSetting">
+          <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked>
+          <span>Include section</span>
+        </label>
       </div>
 
       <div class="settings-section-block">
         <div class="settings-section-title">Calendar</div>
+        <label class="settings-checkbox-row" for="includeCalendarSetting">
+          <input type="checkbox" id="includeCalendarSetting" data-section-setting="calendar" checked>
+          <span>Include section</span>
+        </label>
+        <button type="button" id="showWholeYearSetting" class="btn btn-sm btn-outline-secondary settings-toggle-button" aria-pressed="false">Show whole year</button>
       </div>
 
       <div class="settings-section-block">
         <div class="settings-section-title">Progress</div>
+        <label class="settings-checkbox-row" for="includeProgressSetting">
+          <input type="checkbox" id="includeProgressSetting" data-section-setting="progress" checked>
+          <span>Include section</span>
+        </label>
       </div>
 
       <div class="settings-section-block">
         <div class="settings-section-title">Volume</div>
+        <label class="settings-checkbox-row" for="includeVolumeSetting">
+          <input type="checkbox" id="includeVolumeSetting" data-section-setting="volume" checked>
+          <span>Include section</span>
+        </label>
         <label class="settings-checkbox-row" for="showMatrixSetting">
           <input type="checkbox" id="showMatrixSetting">
           <span>Show matrix</span>
@@ -67,8 +80,6 @@
       </div>
     </div>
   </div>
-
-  <hr>
 
   <div class="col-sm-2" style="margin-left: 90px; display: none;">
     <button type="button" id="backupbtn" class="btn btn-primary" style="width: 120px;background-color: green; border-color: black;">backup</button>
@@ -80,6 +91,7 @@
     </div>
   </div>
   
+  <section id="workoutBuilderSection">
   <!-- Workout Management Section -->
   <div id="workoutManagement">
     <div style="margin-left: 20px;"><h2>Start Workout</h2></div>
@@ -88,18 +100,30 @@
       <div class="row p-3">
         <!-- Exercise Label -->
         <div class="col-3">
-          <label for="exerciseSelect">Choose Exercise:</label>
+          <label for="exercisePickerTrigger">Choose Exercise:</label>
         </div>
       
         <!-- Exercise Select Dropdown -->
         <div class="col-sm-2">
-          <select id="exerciseSelect" class="form-control"></select>
+          <div class="exercise-picker" id="exercisePicker">
+            <button type="button" id="exercisePickerTrigger" class="form-control exercise-picker-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="exercisePickerMenu">
+              <span data-exercise-picker-label>Select Exercise</span>
+              <span aria-hidden="true">▾</span>
+            </button>
+            <select id="exerciseSelect" class="visually-hidden" tabindex="-1" aria-hidden="true"></select>
+            <div id="exercisePickerMenu" class="exercise-picker-menu" role="region" aria-label="Exercise choices" hidden>
+              <div class="btn-group exercise-grouping-toggle" role="group" aria-label="Exercise grouping mode">
+                <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn active" data-grouping-mode="frequency" aria-pressed="true">Frequency</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn" data-grouping-mode="category" aria-pressed="false">Grouping</button>
+              </div>
+              <div id="exercisePickerOptions" class="exercise-picker-options"></div>
+            </div>
+          </div>
         </div>
       
         <!-- Add Exercise Button -->
         <div class="col-sm-5">
           <button type="button" id="addExerciseBtn" class="btn btn-primary">Add</button>
-
         </div>
         
 
@@ -111,7 +135,7 @@
     <!-- List of added exercises will appear here -->
   </div>
     
-  <div class="row p-3">
+  <div class="row p-3" id="workoutSaveSection">
     <div class="col-sm-2">
       <button style="width: 135px;" id="saveWorkoutBtn">Save Workout</button>
     </div>
@@ -130,12 +154,11 @@
       </div>
     </div>
   </div>
-  
-
-
   <hr>
+  </section>
 
   <!-- Add Exercise Section -->
+  <section id="addEditSection">
   <div class="row p-3" id="addExerciseSectiondiv">
     <!-- Add and Edit Section -->
     <div class="col-12">
@@ -220,11 +243,10 @@
       </div>
 
 </div>
-
-    
   <hr>
+  </section>
 
-  <div class="row p-3 hidden" id="showchart">
+  <div class="row p-3 hidden" id="chartsSection">
     <div class="col-5" id="showchart">
       <button style="width: 135px;" id="showchartbtn" class="click">Show chart</button>
       <select id="filter-type" onchange="generatevisuals()">
@@ -234,11 +256,12 @@
       
     </div>
     <div id="visuals-container"></div>
+    <div class="col-12"><hr></div>
   </div>
 
 
 
-  <div class="row p-3">
+  <section class="row p-3" id="showWorkoutsSection">
     <div class="col-5" id="showworkouts">
       <button style="width: 135px;" class="click">Show workouts</button>
       <select id="workout-year-filter" style="display: none;">
@@ -250,7 +273,8 @@
     <div class="row p-3 hidden" id="savedWorkoutList">
       <!-- Saved workouts will appear here -->
     </div>
-  </div>
+    <div class="col-12"><hr></div>
+  </section>
 
   <!-- JavaScript -->
   <script src="js/api-database.js" defer></script>
@@ -265,9 +289,7 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 
-  <hr>
-
-  <div class="row p-3">
+  <div class="row p-3" id="calendarSection">
     <div class="col-2" id="showcal">
       <button style="width: 135px;" class="click">Show calendar</button>
       <select id="calendar-year-filter" style="display: none;">
@@ -277,9 +299,8 @@
     </div>
     
     <div id="calendar-container" style="padding-top: 20px; display: none;"></div>
+    <div class="col-12"><hr></div>
   </div>
-  
-  <hr>
 
   
 
@@ -315,6 +336,7 @@
           <ul id="performanceList" class="hidden" style="padding-left:20px; margin-top:10px;"></ul>
         </section>
       </div>
+      <hr>
     </div>
   </div>
 
@@ -423,8 +445,6 @@ body {
 
 
 
-  <hr>
-
   <div class="row p-3" id="showvolume">
     <div class="col-12">
       <button style="width: 135px;" id="toggleVolumeBtn">Show Volume</button>
@@ -489,6 +509,7 @@ body {
           </div>
         </section>
       </div>
+      <hr>
     </div>
   </div>
 

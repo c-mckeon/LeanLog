@@ -1,4 +1,6 @@
-﻿
+﻿const PAUSE_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><rect x="3" y="2" width="2.6" height="10"/><rect x="8.4" y="2" width="2.6" height="10"/></svg>';
+const PLAY_ICON = '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M3.5 2l8 5-8 5z"/></svg>';
+
 //-////////////////////////////////////////////////////////////////////////// Clock timer fuctionality
 
 
@@ -104,14 +106,14 @@ pauseBtn.addEventListener('click', () => {
     // Resume the clock
     paused = false;
     startTime = Date.now() - elapsedTime; // Adjust the start time to account for elapsed time
-    pauseBtn.textContent = 'Pause';
+    pauseBtn.innerHTML = PAUSE_ICON; pauseBtn.title = 'Pause';
     startClock(); // Restart the clock
   } else {
     // Pause the clock
     paused = true;
     elapsedTime = Date.now() - startTime; // Store the elapsed time
     clearInterval(timerInterval); // Stop the clock ticking
-    pauseBtn.textContent = 'Resume';
+    pauseBtn.innerHTML = PLAY_ICON; pauseBtn.title = 'Resume';
   }
 });
 
@@ -729,7 +731,8 @@ saveNewExerciseBtn.addEventListener('click', async () => {
       await postToWorkoutApi('/api/exercises', {
         name,
         category,
-        focusAreas: selectedFocusAreas
+        focusAreas: selectedFocusAreas,
+        fields: ['sets', 'reps', 'weight']
       });
       newExerciseName.value = '';
       await loadExercises();
@@ -1808,7 +1811,7 @@ function renderExerciseList() {
     const variations = normalizeExerciseVariations(exerciseMetadataById[exercise.id]?.variations ?? exercise.variations);
     const variationButtonHtml = variations.length
       ? `<div class="variation-picker"><button type="button" class="btn btn-sm btn-outline-secondary variation-btn" data-index="${index}" aria-label="Choose variation for ${escapeExerciseHtml(exercise.name)}" title="Variation"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></button><div class="variation-menu hidden">${['', ...variations].map((variation) => `<button type="button" class="variation-option${(exercise.variation || '') === variation ? ' active' : ''}" data-index="${index}" data-variation="${escapeExerciseHtml(variation)}">${variation ? escapeExerciseHtml(variation) : 'Default (none)'}</button>`).join('')}</div></div>`
-      : '';
+      : '<div class="variation-picker variation-placeholder" aria-hidden="true"><button type="button" class="btn btn-sm btn-outline-secondary variation-btn" tabindex="-1" disabled><svg viewBox="0 0 24 24" width="16" height="16"></svg></button></div>';
     const exerciseTitleHtml = `${exercise.name}${exercise.variation ? ` - ${escapeExerciseHtml(exercise.variation)}` : ''}`;
     const activeSetIndex = Number.isInteger(exercise.activeSetIndex) ? Math.min(Math.max(exercise.activeSetIndex, 0), Math.max(totalSets - 1, 0)) : 0;
     const currentSet = setsList[activeSetIndex] || { reps: '', weight: '', note: '', custom: '' };
@@ -1823,7 +1826,7 @@ function renderExerciseList() {
       <input type="number" class="form-control form-control-sm set-input set-reps-input" ${setAttrs} value="${currentSet.reps || ''}" placeholder="Reps">
       ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${setAttrs} value="${currentSet.weight || ''}" placeholder="Weight">` : ''}
       ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${setAttrs} value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : ''}
-      ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${setAttrs} value="${currentSet.note || ''}" placeholder="Note">` : ''}
+      ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${setAttrs} value="${currentSet.note || ''}" placeholder="Set notes">` : ''}
       <button type="button" class="btn btn-sm btn-outline-danger remove-set-btn" ${setAttrs}>×</button>
     ` : (customOnly ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : '');
 
@@ -1832,7 +1835,7 @@ function renderExerciseList() {
       <span class="wk-name" title="${escapeExerciseHtml(exercise.name)}">${exerciseTitleHtml}</span>
       <div class="wk-sets">${variationButtonHtml}${setControlsHtml}</div>
       ${volumeDetailsHtml}
-      <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise note" data-index="${index}" value="${exercise.note || ''}">
+      <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise notes" data-index="${index}" value="${exercise.note || ''}">
       <button type="button" class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
     </div>
     `;
@@ -1846,12 +1849,11 @@ function renderExerciseList() {
 
   intensityDiv.innerHTML = `
   <div class="row p-1">
-  <div class="col-8 col-md-3">Workout Intensity</div>
   <div class="col-8 col-md-2">
-    <input type="number" id="workoutIntensity" class="form-control" placeholder="1-10" min="1" max="10" value="${currentWorkout.intensity || ''}">
+    <input type="number" id="workoutIntensity" class="form-control form-control-sm" placeholder="Score your workout 1-10" min="1" max="10" value="${currentWorkout.intensity || ''}">
   </div>
   <div class="col-8 col-md-2">
-    <input type="text" id="workoutIntensityNote" class="form-control" placeholder="Misc. notes" value="${currentWorkout.intensityNote || ''}">
+    <input type="text" id="workoutIntensityNote" class="form-control form-control-sm" placeholder="Workout notes" value="${currentWorkout.intensityNote || ''}">
   </div>
   <div class="col-1"></div></div> <!-- Empty column to balance the grid -->
   `;
@@ -2032,6 +2034,12 @@ saveWorkoutBtn.addEventListener('click', async () => {
 
   try {
     await saveWorkout(workout);
+    selectedExercises.length = 0;
+    currentWorkout.intensity = '';
+    currentWorkout.intensityNote = '';
+    renderExerciseList();
+    resetBtn.click();
+    checkLastWorkoutResult();
     alert('Workout saved successfully!');
   } catch (error) {
     alert(error.message);
@@ -2414,7 +2422,7 @@ function checkLastWorkoutResult() {
           const input = document.getElementById('lastworkoutresult');
           const resultSection = document.getElementById('resultsection');
 
-          input.placeholder = `How did you feel after your workout on ${date}?`;
+          input.placeholder = `Add how you felt after your workout on ${date}`;
           input.dataset.key = workoutKey; // Save the key for use when saving
           resultSection.classList.remove('hidden');
         }
@@ -2528,6 +2536,27 @@ async function bootstrapPrivateApp() {
 }
 
 bootstrapPrivateApp();
+
+
+
+
+
+
+
+
+
+
+
+// kg <-> lbs converter
+(function setupUnitConverter() {
+  const kg = document.getElementById('convKg');
+  const lbs = document.getElementById('convLbs');
+  if (!kg || !lbs) return;
+  const fmt = (n) => String(Math.round(n * 10) / 10);
+  kg.addEventListener('input', () => { lbs.value = kg.value === '' ? '' : fmt(parseFloat(kg.value) * 2.2046226218); });
+  lbs.addEventListener('input', () => { kg.value = lbs.value === '' ? '' : fmt(parseFloat(lbs.value) / 2.2046226218); });
+})();
+
 
 
 

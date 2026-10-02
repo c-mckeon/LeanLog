@@ -1,4 +1,4 @@
-
+﻿
 //-////////////////////////////////////////////////////////////////////////// Clock timer fuctionality
 
 
@@ -172,6 +172,14 @@ const toggleAddExerciseFormBtn = document.getElementById('toggleAddExerciseFormB
 const settingsGearBtn = document.getElementById('settingsGearBtn');
 const settingsPanel = document.getElementById('settingsPanel');
 const exerciseGroupingModeButtons = document.querySelectorAll('[data-grouping-mode]');
+const showWeightMovedCheckbox = document.getElementById('showWeightMovedSetting');
+const showWorkoutNotesCheckbox = document.getElementById('showWorkoutNotesSetting');
+const showPostWorkoutNotesCheckbox = document.getElementById('showPostWorkoutNotesSetting');
+const showSetNotesCheckbox = document.getElementById('showSetNotesSetting');
+let showWeightMoved = true;
+let showWorkoutNotes = true;
+let showPostWorkoutNotes = true;
+let showSetNotes = true;
 
 function setExercisePickerOpen(isOpen) {
   if (!exercisePickerMenu || !exercisePickerTrigger) return;
@@ -278,6 +286,82 @@ Object.keys(sectionVisibilityTargets).forEach((sectionName) => {
 
 loadSectionVisibilitySettings();
 
+async function loadShowWeightMovedSetting() {
+  try {
+    const snapshot = await database.ref('settings/volume/showWeightMoved').once('value');
+    showWeightMoved = snapshot.val() !== false;
+    if (showWeightMovedCheckbox) showWeightMovedCheckbox.checked = showWeightMoved;
+  } catch (error) {
+    console.error('Error loading weight display setting:', error);
+  }
+}
+
+function applyWorkoutNoteVisibility() {
+  const intensityRow = document.getElementById('introwcss');
+  const resultSection = document.getElementById('resultsection');
+  if (intensityRow) intensityRow.classList.toggle('hidden', !showWorkoutNotes);
+  if (resultSection && !showPostWorkoutNotes) resultSection.classList.add('hidden');
+}
+
+if (showWeightMovedCheckbox) {
+  showWeightMovedCheckbox.addEventListener('change', async () => {
+    const previousValue = showWeightMoved;
+    showWeightMoved = showWeightMovedCheckbox.checked;
+    updateVolumeSummary();
+
+    try {
+      await database.ref('settings/volume/showWeightMoved').set(showWeightMoved);
+    } catch (error) {
+      showWeightMoved = previousValue;
+      showWeightMovedCheckbox.checked = previousValue;
+      updateVolumeSummary();
+      console.error('Error saving weight display setting:', error);
+    }
+  });
+}
+
+async function saveWorkoutNoteVisibility(settingName, checkbox, previousValue) {
+  try {
+    await database.ref('settings/workoutBuilder').update({ [settingName]: checkbox.checked });
+  } catch (error) {
+    checkbox.checked = previousValue;
+    if (settingName === 'showWorkoutNotes') showWorkoutNotes = previousValue;
+    if (settingName === 'showPostWorkoutNotes') showPostWorkoutNotes = previousValue;
+    if (settingName === 'showSetNotes') { showSetNotes = previousValue; renderExerciseList(); }
+    applyWorkoutNoteVisibility();
+    if (settingName === 'showPostWorkoutNotes' && previousValue) checkLastWorkoutResult();
+    console.error(`Error saving ${settingName} setting:`, error);
+  }
+}
+
+if (showWorkoutNotesCheckbox) {
+  showWorkoutNotesCheckbox.addEventListener('change', async () => {
+    const previousValue = showWorkoutNotes;
+    showWorkoutNotes = showWorkoutNotesCheckbox.checked;
+    applyWorkoutNoteVisibility();
+    await saveWorkoutNoteVisibility('showWorkoutNotes', showWorkoutNotesCheckbox, previousValue);
+  });
+}
+
+if (showSetNotesCheckbox) {
+  showSetNotesCheckbox.addEventListener('change', async () => {
+    const previousValue = showSetNotes;
+    showSetNotes = showSetNotesCheckbox.checked;
+    renderExerciseList();
+    await saveWorkoutNoteVisibility('showSetNotes', showSetNotesCheckbox, previousValue);
+  });
+}
+
+if (showPostWorkoutNotesCheckbox) {
+  showPostWorkoutNotesCheckbox.addEventListener('change', async () => {
+    const previousValue = showPostWorkoutNotes;
+    showPostWorkoutNotes = showPostWorkoutNotesCheckbox.checked;
+    applyWorkoutNoteVisibility();
+    if (showPostWorkoutNotes) checkLastWorkoutResult();
+    await saveWorkoutNoteVisibility('showPostWorkoutNotes', showPostWorkoutNotesCheckbox, previousValue);
+  });
+}
+
 const EXERCISE_GROUPING_MODE = {
   FREQUENCY: 'frequency',
   CATEGORY: 'category'
@@ -285,6 +369,26 @@ const EXERCISE_GROUPING_MODE = {
 const DEFAULT_EXERCISE_CATEGORIES = ['Legs', 'Core', 'Upper-Body Pull'];
 let workoutBuilderGroupingMode = EXERCISE_GROUPING_MODE.FREQUENCY;
 let exerciseCategories = [];
+
+function normalizeExerciseVariations(variations) {
+  const values = Array.isArray(variations)
+    ? variations
+    : (variations && typeof variations === 'object' ? Object.values(variations) : []);
+  return [...new Set(values
+    .filter((variation) => typeof variation === 'string')
+    .map((variation) => variation.trim())
+    .filter(Boolean))];
+}
+
+function escapeExerciseHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
+}
 
 if (settingsGearBtn && settingsPanel) {
   settingsGearBtn.addEventListener('click', () => {
@@ -303,6 +407,7 @@ if (settingsGearBtn && settingsPanel) {
 const selectedExercises = [];
 // Exercise metadata loaded into the dropdown so added exercises preserve editor settings.
 const exerciseMetadataById = {};
+let exerciseCatalogByCategory = {};
 
 // Normalize stored fields to an array. Accepts arrays or objects (Firebase may store arrays as objects).
 function normalizeFields(raw) {
@@ -328,7 +433,6 @@ focusCheckbox.addEventListener('change', () => {
 if (toggleAddExerciseFormBtn && addExerciseFormWrapper) {
   toggleAddExerciseFormBtn.addEventListener('click', () => {
     addExerciseFormWrapper.classList.toggle('hidden');
-    toggleAddExerciseFormBtn.textContent = addExerciseFormWrapper.classList.contains('hidden') ? 'Add Exercise' : 'Hide Add Exercise Form';
   });
 }
 
@@ -342,7 +446,39 @@ async function loadExercises() {
   const response = await fetch(`${workoutApiOrigin}/api/exercises`, { credentials: 'include' });
   if (!response.ok) throw new Error(`Could not load exercises (${response.status}).`);
   const result = await response.json();
-  renderExerciseDropdown(result.exercises || {}, {});
+  exerciseCatalogByCategory = result.exercises || {};
+
+  const hasUnnamedExercise = Object.values(exerciseCatalogByCategory).some((categoryExercises) =>
+    Object.values(categoryExercises || {}).some((exercise) => !exercise || typeof exercise.name !== 'string' || !exercise.name.trim())
+  );
+
+  if (hasUnnamedExercise) {
+    const workoutsSnapshot = await database.ref('workouts').once('value');
+    const workoutNamesByExerciseId = {};
+    Object.values(workoutsSnapshot.val() || {}).forEach((workout) => {
+      const workoutExercises = Array.isArray(workout?.exercises)
+        ? workout.exercises
+        : Object.values(workout?.exercises || {});
+      workoutExercises.forEach((exercise) => {
+        if (exercise?.id && typeof exercise.name === 'string' && exercise.name.trim()) {
+          workoutNamesByExerciseId[exercise.id] = exercise.name.trim();
+        }
+      });
+    });
+
+    Object.values(exerciseCatalogByCategory).forEach((categoryExercises) => {
+      Object.entries(categoryExercises || {}).forEach(([exerciseId, exercise]) => {
+        if (exercise && (typeof exercise.name !== 'string' || !exercise.name.trim())) {
+          if (!Array.isArray(exercise.variations) && Array.isArray(exercise.name?.variations)) {
+            exercise.variations = exercise.name.variations;
+          }
+          exercise.name = workoutNamesByExerciseId[exerciseId] || '';
+        }
+      });
+    });
+  }
+
+  renderExerciseDropdown(exerciseCatalogByCategory, {});
 }
 
 async function computeExerciseFrequency() {
@@ -579,7 +715,7 @@ async function createFocusArea(name) {
 saveNewExerciseBtn.addEventListener('click', async () => {
     const name = newExerciseName.value.trim();
     const category = exerciseCategory.value;
-    const selectedFocusAreas = focusCheckbox.checked
+  const selectedFocusAreas = focusCheckbox?.checked
         ? Array.from(focusCategory.selectedOptions).map(opt => opt.value)
         : [];
 
@@ -595,6 +731,7 @@ saveNewExerciseBtn.addEventListener('click', async () => {
         focusAreas: selectedFocusAreas
       });
       newExerciseName.value = '';
+      await loadExercises();
       alert('Exercise added successfully!');
     } catch (error) {
       alert(error.message);
@@ -625,6 +762,8 @@ addExerciseBtn.addEventListener('click', () => {
         category: exerciseCategory,
       fields,
       customLabel: exerciseMetadata.customLabel || '',
+        variations: normalizeExerciseVariations(exerciseMetadata.variations),
+        variation: '',
         sets: trackSetsReps ? 1 : 0,
         reps: 0,
         note: '',
@@ -686,9 +825,23 @@ async function loadWorkoutBuilderSettings() {
     const snapshot = await getSettingsRef().once('value');
     const settings = snapshot.val() || {};
     const savedMode = settings.exerciseDropdownGrouping;
+    showWorkoutNotes = settings.showWorkoutNotes !== false;
+    showPostWorkoutNotes = settings.showPostWorkoutNotes !== false;
+    showSetNotes = settings.showSetNotes !== false;
+    if (showSetNotesCheckbox) showSetNotesCheckbox.checked = showSetNotes;
+    if (showWorkoutNotesCheckbox) showWorkoutNotesCheckbox.checked = showWorkoutNotes;
+    if (showPostWorkoutNotesCheckbox) showPostWorkoutNotesCheckbox.checked = showPostWorkoutNotes;
+    applyWorkoutNoteVisibility();
     await setWorkoutBuilderGroupingMode(savedMode, false);
   } catch (error) {
     console.error('Error loading workout builder settings:', error);
+    showWorkoutNotes = true;
+    showPostWorkoutNotes = true;
+    showSetNotes = true;
+    if (showSetNotesCheckbox) showSetNotesCheckbox.checked = true;
+    if (showWorkoutNotesCheckbox) showWorkoutNotesCheckbox.checked = true;
+    if (showPostWorkoutNotesCheckbox) showPostWorkoutNotesCheckbox.checked = true;
+    applyWorkoutNoteVisibility();
     await setWorkoutBuilderGroupingMode(EXERCISE_GROUPING_MODE.FREQUENCY, false);
   }
 }
@@ -782,7 +935,8 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
         const exerciseFields = normalizeFields(categoryExercises[exerciseId]?.fields);
           exerciseMetadataById[exerciseId] = {
             fields: exerciseFields,
-            customLabel: categoryExercises[exerciseId]?.customLabel || ''
+            customLabel: categoryExercises[exerciseId]?.customLabel || '',
+            variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations)
           };
         const option = document.createElement("option");
         option.value = exerciseId;
@@ -817,7 +971,8 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
       const exerciseFields = normalizeFields(categoryExercises[exerciseId]?.fields);
       exerciseMetadataById[exerciseId] = {
         fields: exerciseFields,
-        customLabel: categoryExercises[exerciseId]?.customLabel || ''
+        customLabel: categoryExercises[exerciseId]?.customLabel || '',
+        variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations)
       };
       const option = document.createElement("option");
       option.value = exerciseId;
@@ -1185,56 +1340,155 @@ initWorkoutEditorControls();
 //////////////////////////////////////////////////////////////////////// Creating exercises, editing past workouts 
 
 //-////////////////////////////////////////////////////////////////////// Exercise list editing
-// Global variables for managing the current type, category, exercise keys, and index.
-var currentExerciseType = "exercises"; // default type; user can change via typeSelector
+// Global variables for managing the current category, exercise keys, and index.
 var currentExerciseCategory = null;    // will be set by the category selector
 var exerciseKeys = [];                 // Firebase keys for exercises in the selected category
 var exerciseDataMap = {};             // exercise metadata keyed by Firebase ID
 var currentExerciseIndex = 0;
 
-// Load available categories from the chosen root node (exercises or focusareas)
-function loadCategories(type) {
-  currentExerciseType = type;
-  var refPath = "/" + type + "/";
-  database.ref(refPath).once("value").then(snapshot => {
-    if (snapshot.exists()) {
-      var categories = Object.keys(snapshot.val());
-      var selector = document.getElementById("categorySelector");
-      if (selector) {
-        // Clear previous options
-        selector.innerHTML = "";
-        categories.forEach(cat => {
-          var option = document.createElement("option");
-          option.value = cat;
-          option.textContent = cat;
-          selector.appendChild(option);
-        });
-        // Set the current category to the first one and load its exercises for the editor.
-        currentExerciseCategory = categories[0];
-        loadExercisesEditor();
-      }
-    } else {
-      console.log("No categories found under " + refPath);
-    }
-  }).catch(error => console.error("Error loading categories:", error));
+function loadCategories() {
+  const selector = document.getElementById('categorySelector');
+  if (!selector) return;
+
+  const availableCategories = Object.keys(exerciseCatalogByCategory).filter((category) => {
+    const records = getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {};
+    return Object.values(records).some((exercise) => typeof exercise?.name === 'string' && exercise.name.trim());
+  });
+  const categories = [...new Set([
+    ...exerciseCategories.filter((category) => availableCategories.includes(category)),
+    ...availableCategories
+  ])];
+
+  selector.replaceChildren(...categories.map((category) => new Option(category, category)));
+  currentExerciseCategory = categories[0] || null;
+  if (currentExerciseCategory) {
+    loadExercisesEditor();
+  } else {
+    exerciseKeys = [];
+    exerciseDataMap = {};
+    renderExerciseSelector();
+    document.getElementById('exerciseeditorsection').innerHTML = '<p>No exercises found.</p>';
+  }
 }
 
-// Event listener for when the type selection changes.
-document.getElementById("typeSelector").addEventListener("change", function(e) {
-  loadCategories(e.target.value);
-});
+// Exercise editor: Category → Exercise → Variation.
+// Exercise Details live on the exercise; Volume Tracking mappings live per variation
+// ('' = exercise default, used by workouts whose variation has no mapping of its own).
+const EXERCISE_DATA_ROOT = 'exercises';
+const VOLUME_MUSCLE_GROUPS = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Core', 'Legs'];
+// A contribution of 1.0 marks a primary target (direct sets); lower values are secondary.
+const DEFAULT_CONTRIBUTION = 1;
+let currentVariation = '';
+let editorVariations = [];
+let editorVolumeMappings = [];
+
+function normalizeVolumeMappings(mappings) {
+  const values = Array.isArray(mappings)
+    ? mappings
+    : (mappings && typeof mappings === 'object' ? Object.values(mappings) : []);
+  return values
+    .filter((mapping) => mapping && typeof mapping.muscleGroup === 'string' && mapping.muscleGroup.trim())
+    .map((mapping) => {
+      const weight = Number(mapping.weight);
+      return {
+        variation: typeof mapping.variation === 'string' ? mapping.variation.trim() : '',
+        muscleGroup: mapping.muscleGroup.trim(),
+        weight: Number.isFinite(weight) && weight >= 0 ? weight : DEFAULT_CONTRIBUTION
+      };
+    });
+}
+
+function getCurrentExerciseId() {
+  return exerciseKeys[currentExerciseIndex] || null;
+}
+
+function getExerciseDataPath(exerciseId) {
+  return `${EXERCISE_DATA_ROOT}/${exerciseId}`;
+}
 
 // Event listener for when the category selection changes.
 document.getElementById("categorySelector").addEventListener("change", function(e) {
+  captureVolumeRows();
   currentExerciseCategory = e.target.value;
   loadExercisesEditor();
 });
 
 document.getElementById("exerciseSelector").addEventListener("change", function(e) {
+  captureVolumeRows();
   currentExerciseIndex = exerciseKeys.indexOf(e.target.value);
   if (currentExerciseIndex < 0) currentExerciseIndex = 0;
   displayExercise();
 });
+
+document.getElementById("variationSelector").addEventListener("change", function(e) {
+  captureVolumeRows();
+  currentVariation = e.target.value;
+  renderVolumeTracking();
+  updateVariationButtons();
+});
+
+async function persistExerciseUpdates(exerciseId, updates) {
+  await database.ref(getExerciseDataPath(exerciseId)).update(updates);
+  [exerciseDataMap[exerciseId], exerciseMetadataById[exerciseId]].forEach((record) => {
+    if (record) Object.assign(record, updates);
+  });
+}
+
+const addExerciseVariationButton = document.getElementById('addExerciseVariationBtn');
+if (addExerciseVariationButton) {
+  addExerciseVariationButton.addEventListener('click', async () => {
+    const exerciseId = getCurrentExerciseId();
+    const exercise = exerciseId && exerciseDataMap[exerciseId];
+    if (!exercise) return;
+
+    const variationName = prompt(`Add a variation for ${exercise.name || 'this exercise'}:`)?.trim();
+    if (!variationName) return;
+
+    if (editorVariations.some((variation) => variation.toLowerCase() === variationName.toLowerCase())) {
+      alert('That variation already exists for this exercise.');
+      return;
+    }
+
+    captureVolumeRows();
+    const updatedVariations = [...editorVariations, variationName];
+
+    try {
+      await persistExerciseUpdates(exerciseId, { variations: updatedVariations });
+      editorVariations = updatedVariations;
+      currentVariation = variationName;
+      renderVariationSelector();
+      renderVolumeTracking();
+    } catch (error) {
+      console.error('Error saving exercise variation:', error);
+      alert('Could not save the variation. Please try again.');
+    }
+  });
+}
+
+const removeExerciseVariationButton = document.getElementById('removeExerciseVariationBtn');
+if (removeExerciseVariationButton) {
+  removeExerciseVariationButton.addEventListener('click', async () => {
+    const exerciseId = getCurrentExerciseId();
+    if (!exerciseId || !currentVariation) return;
+    if (!confirm(`Remove the variation "${currentVariation}" and its volume mappings?`)) return;
+
+    captureVolumeRows();
+    const updatedVariations = editorVariations.filter((variation) => variation !== currentVariation);
+    const updatedMappings = editorVolumeMappings.filter((mapping) => mapping.variation !== currentVariation);
+
+    try {
+      await persistExerciseUpdates(exerciseId, { variations: updatedVariations, volumeMappings: updatedMappings });
+      editorVariations = updatedVariations;
+      editorVolumeMappings = updatedMappings;
+      currentVariation = '';
+      renderVariationSelector();
+      renderVolumeTracking();
+    } catch (error) {
+      console.error('Error removing exercise variation:', error);
+      alert('Could not remove the variation. Please try again.');
+    }
+  });
+}
 
 const saveExoBtn = document.getElementById("saveExoBtn");
 const deleteExoBtn = document.getElementById("deleteExoBtn");
@@ -1243,97 +1497,170 @@ if (deleteExoBtn) deleteExoBtn.addEventListener("click", deleteexo);
 
 function loadExercisesEditor() {
   if (!currentExerciseCategory) return;
-  var refPath = "/" + currentExerciseType + "/" + currentExerciseCategory;
-  console.log("Fetching exercises from:", refPath);
-  
-  database.ref(refPath).once("value").then(snapshot => {
-    if (snapshot.exists()) {
-      const exerciseData = snapshot.val() || {};
-      exerciseDataMap = exerciseData;
-      exerciseKeys = Object.keys(exerciseData).filter(key => key !== 'note');
-      console.log("Exercise Keys:", exerciseKeys); // DEBUG
-      renderExerciseSelector();
-      if (exerciseKeys.length > 0) {
-        currentExerciseIndex = 0;
-        displayExercise();
-      } else {
-        document.getElementById("exerciseeditorsection").innerHTML = "<p>No exercises found in this category.</p>";
-      }
-    } else {
-      document.getElementById("exerciseeditorsection").innerHTML = `<p>No data found at ${refPath}.</p>`;
-    }
-  }).catch(error => console.error("Error fetching exercises:", error));
+  const categoryExercises = getExerciseCategoryBucket(exerciseCatalogByCategory, currentExerciseCategory) || {};
+  exerciseDataMap = Object.fromEntries(Object.entries(categoryExercises)
+    .filter(([, exercise]) => exercise && typeof exercise.name === 'string' && exercise.name.trim()));
+  exerciseKeys = Object.keys(exerciseDataMap);
+  currentExerciseIndex = 0;
+  renderExerciseSelector();
+  displayExercise();
 }
 
 function renderExerciseSelector() {
   var selector = document.getElementById("exerciseSelector");
   if (!selector) return;
-  selector.innerHTML = "";
-  exerciseKeys.forEach(exerciseId => {
-    var option = document.createElement("option");
-    option.value = exerciseId;
-    option.textContent = (exerciseDataMap[exerciseId] && exerciseDataMap[exerciseId].name) ? exerciseDataMap[exerciseId].name : exerciseId;
-    selector.appendChild(option);
-  });
+  selector.replaceChildren(...exerciseKeys.map((exerciseId) =>
+    new Option(exerciseDataMap[exerciseId]?.name || exerciseId, exerciseId)));
   if (exerciseKeys.length > 0) {
     selector.value = exerciseKeys[currentExerciseIndex] || exerciseKeys[0];
   }
 }
 
-// Display the current exercise for editing/viewing.
+function renderVariationSelector() {
+  const selector = document.getElementById('variationSelector');
+  if (!selector) return;
+  selector.replaceChildren(
+    new Option('Default (no variation)', ''),
+    ...editorVariations.map((variation) => new Option(variation, variation))
+  );
+  selector.value = currentVariation;
+  selector.disabled = exerciseKeys.length === 0;
+  updateVariationButtons();
+}
+
+function updateVariationButtons() {
+  const hasExercise = exerciseKeys.length > 0;
+  if (addExerciseVariationButton) addExerciseVariationButton.disabled = !hasExercise;
+  if (removeExerciseVariationButton) removeExerciseVariationButton.disabled = !hasExercise || !currentVariation;
+}
+
+// Display the selected exercise: details, its variations, and the volume mappings of the selected variation.
 function displayExercise() {
-  if (exerciseKeys.length === 0) return;
+  const detailsSection = document.getElementById('exerciseeditorsection');
+  const volumeSection = document.getElementById('volumeTrackingSection');
+  const exerciseId = getCurrentExerciseId();
+  const data = exerciseId && exerciseDataMap[exerciseId];
 
-  // Filter out the "note" key from exerciseKeys
-  const filteredExerciseKeys = exerciseKeys.filter(key => key !== "note");
-
-  // If there are no valid exercises, return
-  if (filteredExerciseKeys.length === 0) {
-    document.getElementById("exerciseeditorsection").innerHTML = "<p>No valid exercises available.</p>";
+  currentVariation = '';
+  if (!data) {
+    editorVariations = [];
+    editorVolumeMappings = [];
+    detailsSection.innerHTML = '<p>No exercises found in this category.</p>';
+    volumeSection.innerHTML = '';
+    const emptyCounter = document.getElementById('exerciseCounter');
+    if (emptyCounter) emptyCounter.textContent = 'Exercise 0 of 0';
+    renderVariationSelector();
     return;
   }
 
-  // Get the current exercise ID based on the filtered list
-  var exerciseID = filteredExerciseKeys[currentExerciseIndex];
-  var refPath = "/" + currentExerciseType + "/" + currentExerciseCategory + "/" + exerciseID;
-  console.log("Fetching exercise from:", refPath); // DEBUG
+  editorVariations = normalizeExerciseVariations(data.variations);
+  editorVolumeMappings = normalizeVolumeMappings(data.volumeMappings);
 
-  database.ref(refPath).once("value").then(snapshot => {
-    var data = snapshot.val();
-    console.log("Exercise data received:", data); // DEBUG
+  const fields = normalizeFields(data.fields);
+  const trackedFieldLabels = { sets: 'Sets', reps: 'Reps', weight: 'Weight', custom: 'Custom' };
+  detailsSection.innerHTML = `
+    <h3>Exercise Details</h3>
+    <div class="exo-field">
+      <label for="exercise_name">Name</label>
+      <input type="text" id="exercise_name" value="${escapeExerciseHtml(data.name)}">
+    </div>
+    <div class="exo-field">
+      <label for="exercise_note">Notes</label>
+      <textarea id="exercise_note" rows="3">${escapeExerciseHtml(data.note)}</textarea>
+    </div>
+    <div class="exo-field exo-checks">
+      <label>Track fields</label>
+      <p class="exo-hint">Select which fields to track for this exercise.</p>
+      ${Object.entries(trackedFieldLabels).map(([value, label]) =>
+        `<label><input type="checkbox" class="field-checkbox" value="${value}" ${fields.includes(value) ? 'checked' : ''}> ${label}</label>`).join('\n      ')}
+    </div>
+    <div id="customFieldContainer" class="exo-field" style="${fields.includes('custom') ? '' : 'display:none;'}">
+      <label for="exercise_custom_label">Custom field label</label>
+      <input type="text" id="exercise_custom_label" value="${escapeExerciseHtml(data.customLabel)}">
+    </div>
+  `;
+  const counter = document.getElementById('exerciseCounter');
+  if (counter) counter.textContent = `Exercise ${currentExerciseIndex + 1} of ${exerciseKeys.length}`;
+  setupExerciseTrackingToggle();
+  renderVariationSelector();
+  renderVolumeTracking();
+}
 
-    var editorHTML = "";
-    if (data) {
-      const fields = normalizeFields(data?.fields);
-      const customLabel = data.customLabel || '';
+function buildVolumeRowHtml(mapping) {
+  const groups = VOLUME_MUSCLE_GROUPS.includes(mapping.muscleGroup)
+    ? VOLUME_MUSCLE_GROUPS
+    : [...VOLUME_MUSCLE_GROUPS, mapping.muscleGroup];
+  return `
+    <tr class="volume-mapping-row">
+      <td><select class="volume-group-select form-control form-control-sm" aria-label="Muscle group">
+        ${groups.map((group) => `<option value="${escapeExerciseHtml(group)}" ${group === mapping.muscleGroup ? 'selected' : ''}>${escapeExerciseHtml(group)}</option>`).join('')}
+      </select></td>
+      <td><input type="number" class="volume-weight-input form-control form-control-sm" aria-label="Contribution" min="0" max="1" step="0.05" value="${mapping.weight}" style="width:90px;"></td>
+      <td><button type="button" class="btn btn-sm btn-outline-danger volume-delete-btn" aria-label="Delete muscle group">✕</button></td>
+    </tr>`;
+}
 
-      editorHTML += `<h3>Exercise Info</h3>`;
-      editorHTML += `
-        <label style="display:inline-block; width:50px;">Name:</label>
-        <input type="text" id="exercise_name" value="${data.name || ''}"><br>
-        <label style="display:inline-block; width:50px;">Note:</label>
-        <input type="text" id="exercise_note" value="${data.note || ''}"><br>
-        <div style="margin-top: 10px;">
-          <strong>Track fields:</strong><br>
-          <label><input type="checkbox" class="field-checkbox" value="sets" ${fields.includes('sets') ? 'checked' : ''}> Sets</label>
-          <label><input type="checkbox" class="field-checkbox" value="reps" ${fields.includes('reps') ? 'checked' : ''}> Reps</label>
-          <label><input type="checkbox" class="field-checkbox" value="weight" ${fields.includes('weight') ? 'checked' : ''}> Weight</label>
-          <label><input type="checkbox" class="field-checkbox" value="custom" ${fields.includes('custom') ? 'checked' : ''}> Custom</label>
-        </div>
-        <div id="customFieldContainer" style="margin-top: 10px; ${fields.includes('custom') ? '' : 'display:none;'}">
-          <label style="display:inline-block; width:120px;">Custom field label:</label>
-          <input type="text" id="exercise_custom_label" value="${customLabel}"><br>
-        </div>
-        <p>Exercise ${currentExerciseIndex + 1} of ${filteredExerciseKeys.length}</p>
-      `;
-    } else {
-      editorHTML = "<p>No data for this exercise.</p>";
-    }
-    document.getElementById("exerciseeditorsection").innerHTML = editorHTML;
-    const selector = document.getElementById("exerciseSelector");
-    if (selector) selector.value = exerciseID;
-    setupExerciseTrackingToggle();
-  }).catch(error => console.error("Error displaying exercise:", error));
+function renderVolumeTracking() {
+  const section = document.getElementById('volumeTrackingSection');
+  if (!section) return;
+  if (exerciseKeys.length === 0) {
+    section.innerHTML = '';
+    return;
+  }
+
+  const rows = editorVolumeMappings.filter((mapping) => mapping.variation === currentVariation);
+  const scope = currentVariation
+    ? `Assign muscle groups and their contribution for the "${escapeExerciseHtml(currentVariation)}" variation.`
+    : 'Assign muscle groups and their contribution for this exercise. Used when a variation has no mapping of its own.';
+  section.innerHTML = `
+    <div class="exo-card-header">
+      <h3>Target Groups <small>(Volume Tracking)</small></h3>
+      <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">⊕ Add Muscle Group</button>
+    </div>
+    <p class="exo-hint">${scope}</p>
+    <table class="exo-volume-table">
+      <thead><tr><th>Muscle Group</th><th>Contribution</th><th></th></tr></thead>
+      <tbody id="volumeMappingRows">${rows.map(buildVolumeRowHtml).join('')}</tbody>
+    </table>
+    <div class="exo-info">
+      <strong>About muscle group contributions</strong><br>
+      Effective volume = completed sets × contribution. A contribution of 1.0 is a primary target and counts as direct sets; lower values are secondary muscles that assist the movement.
+    </div>
+  `;
+
+  const body = document.getElementById('volumeMappingRows');
+  document.getElementById('addVolumeMappingBtn').addEventListener('click', () => {
+    captureVolumeRows();
+    const used = editorVolumeMappings.filter((mapping) => mapping.variation === currentVariation).map((mapping) => mapping.muscleGroup);
+    const muscleGroup = VOLUME_MUSCLE_GROUPS.find((group) => !used.includes(group)) || VOLUME_MUSCLE_GROUPS[0];
+    editorVolumeMappings.push({ variation: currentVariation, muscleGroup, weight: DEFAULT_CONTRIBUTION });
+    renderVolumeTracking();
+  });
+  body.addEventListener('click', (event) => {
+    const deleteButton = event.target.closest('.volume-delete-btn');
+    if (!deleteButton) return;
+    deleteButton.closest('.volume-mapping-row').remove();
+    captureVolumeRows();
+    renderVolumeTracking();
+  });
+}
+
+// Copy the visible volume rows into editorVolumeMappings for the selected variation.
+function captureVolumeRows() {
+  const body = document.getElementById('volumeMappingRows');
+  if (!body) return;
+  const captured = Array.from(body.querySelectorAll('.volume-mapping-row')).map((row) => {
+    const weight = Number(row.querySelector('.volume-weight-input').value);
+    return {
+      variation: currentVariation,
+      muscleGroup: row.querySelector('.volume-group-select').value,
+      weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0), 1) : 0
+    };
+  });
+  editorVolumeMappings = [
+    ...editorVolumeMappings.filter((mapping) => mapping.variation !== currentVariation),
+    ...captured
+  ];
 }
 
 function setupExerciseTrackingToggle() {
@@ -1349,45 +1676,81 @@ function setupExerciseTrackingToggle() {
   });
 }
 
-// Navigate to the next exercise.
-function nextexo() {
-  if (exerciseKeys.length > 0) {
-    do {
-      currentExerciseIndex = (currentExerciseIndex + 1) % exerciseKeys.length;
-    } while (exerciseKeys[currentExerciseIndex] === "note"); // Skip the "note" node
+// Save the exercise details and every variation's volume mappings.
+function saveexo() {
+  const exerciseId = getCurrentExerciseId();
+  if (!exerciseId) return;
 
-    renderExerciseSelector();
-    displayExercise();
+  captureVolumeRows();
+  const name = document.getElementById("exercise_name").value.trim();
+  if (!name) {
+    alert('Exercise name is required.');
+    return;
   }
+
+  const seen = new Set();
+  for (const mapping of editorVolumeMappings) {
+    const key = `${mapping.variation}\u0000${mapping.muscleGroup}`;
+    if (seen.has(key)) {
+      alert(`${mapping.muscleGroup} is mapped more than once${mapping.variation ? ` for "${mapping.variation}"` : ' by default'}.`);
+      return;
+    }
+    seen.add(key);
+  }
+
+  const fields = Array.from(document.querySelectorAll('.field-checkbox'))
+    .filter(cb => cb.checked)
+    .map(cb => cb.value);
+
+  // Fields are stored as an object so empty selections survive Firebase storage.
+  const storedFields = {};
+  fields.forEach((f, i) => { storedFields[i] = f; });
+
+  const customLabelInput = document.getElementById("exercise_custom_label");
+  const updatedData = {
+    name,
+    note: document.getElementById("exercise_note").value,
+    fields: storedFields,
+    customLabel: fields.includes('custom') && customLabelInput ? customLabelInput.value || '' : '',
+    variations: editorVariations,
+    volumeMappings: editorVolumeMappings
+  };
+
+  persistExerciseUpdates(exerciseId, updatedData)
+    .then(() => {
+      alert("Exercise updated successfully!");
+      renderExerciseSelector();
+    })
+    .catch(error => alert("Error updating exercise: " + error.message));
 }
 
-// Navigate to the previous exercise.
-function prevexo() {
-  if (exerciseKeys.length > 0) {
-    do {
-      currentExerciseIndex = (currentExerciseIndex - 1 + exerciseKeys.length) % exerciseKeys.length;
-    } while (exerciseKeys[currentExerciseIndex] === "note"); // Skip the "note" node
-
-    renderExerciseSelector();
-    displayExercise();
-  }
-}
-
-// Delete the current exercise from Firebase.
-function deleteexo() {
+function stepExercise(direction) {
   if (exerciseKeys.length === 0) return;
-  if (!confirm("Are you sure you want to delete this exercise?")) return;
-  var exerciseID = exerciseKeys[currentExerciseIndex];
-  var refPath = "/" + currentExerciseType + "/" + currentExerciseCategory + "/" + exerciseID;
+  captureVolumeRows();
+  currentExerciseIndex = (currentExerciseIndex + direction + exerciseKeys.length) % exerciseKeys.length;
+  renderExerciseSelector();
+  displayExercise();
+}
 
-  database.ref(refPath).remove()
+document.getElementById('prevExerciseBtn')?.addEventListener('click', () => stepExercise(-1));
+document.getElementById('nextExerciseBtn')?.addEventListener('click', () => stepExercise(1));
+
+// Delete the current exercise.
+function deleteexo() {
+  const exerciseId = getCurrentExerciseId();
+  if (!exerciseId) return;
+  if (!confirm("Are you sure you want to delete this exercise?")) return;
+
+  database.ref(getExerciseDataPath(exerciseId)).remove()
     .then(() => {
       alert("Exercise deleted successfully!");
-      // Remove the deleted exercise from the local keys array.
+      const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, currentExerciseCategory);
+      if (bucket) delete bucket[exerciseId];
+      delete exerciseMetadataById[exerciseId];
+      delete exerciseDataMap[exerciseId];
       exerciseKeys.splice(currentExerciseIndex, 1);
-      if (currentExerciseIndex >= exerciseKeys.length) {
-        currentExerciseIndex = Math.max(exerciseKeys.length - 1, 0);
-      }
+      currentExerciseIndex = Math.min(currentExerciseIndex, Math.max(exerciseKeys.length - 1, 0));
+      renderExerciseSelector();
       displayExercise();
     })
     .catch(error => alert("Error deleting exercise: " + error.message));
@@ -1426,69 +1789,44 @@ function renderExerciseList() {
     const customOnly = showCustom && !showSetsReps;
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
-    const volumeLabel = showSetsReps && totalSets > 0 ? `${totalSets} sets • ${totalReps} reps • ${totalWeight} kg moved` : '';
-    const volumeDetailsHtml = showSetsReps ? `<div class="volume-details">${volumeLabel || 'No sets yet'}</div>` : '';
+    const volumeLabel = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
+    const volumeDetailsHtml = showSetsReps ? `<span class="volume-details">${volumeLabel || 'No sets yet'}</span>` : '';
+    const variations = normalizeExerciseVariations(exerciseMetadataById[exercise.id]?.variations ?? exercise.variations);
+    const variationButtonHtml = variations.length
+      ? `<div class="variation-picker"><button type="button" class="btn btn-sm btn-outline-secondary variation-btn" data-index="${index}" aria-label="Choose variation for ${escapeExerciseHtml(exercise.name)}" title="Variation"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></button><div class="variation-menu hidden">${['', ...variations].map((variation) => `<button type="button" class="variation-option${(exercise.variation || '') === variation ? ' active' : ''}" data-index="${index}" data-variation="${escapeExerciseHtml(variation)}">${variation ? escapeExerciseHtml(variation) : 'Default (none)'}</button>`).join('')}</div></div>`
+      : '';
+    const exerciseTitleHtml = `${exercise.name}${exercise.variation ? ` - ${escapeExerciseHtml(exercise.variation)}` : ''}`;
     const activeSetIndex = Number.isInteger(exercise.activeSetIndex) ? Math.min(Math.max(exercise.activeSetIndex, 0), Math.max(totalSets - 1, 0)) : 0;
     const currentSet = setsList[activeSetIndex] || { reps: '', weight: '', note: '', custom: '' };
-    const canMoveOlder = totalSets > 1 && activeSetIndex > 0;
-    const canMoveNewer = totalSets > 1 && activeSetIndex < totalSets - 1;
-    const navHtml = totalSets >= 1 ? `
-      <button class="btn btn-sm btn-outline-secondary set-up-btn" data-index="${index}" ${canMoveNewer ? '' : 'disabled'}>▲</button>
-      <span class="set-counter">${activeSetIndex + 1}/${totalSets}</span>
-      <button class="btn btn-sm btn-outline-secondary set-down-btn" data-index="${index}" ${canMoveOlder ? '' : 'disabled'}>▼</button>
-    ` : '';
+    const setAttrs = `data-index="${index}" data-set-index="${activeSetIndex}"`;
+    const customPlaceholder = exercise.customLabel || 'Custom';
 
-    const addSetButtonHtml = showSetsReps ? `<button class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>` : '';
-    const repsInputHtml = showSetsReps ? `<input type="number" class="form-control form-control-sm set-input set-reps-input" data-index="${index}" data-set-index="${activeSetIndex}" value="${currentSet.reps || ''}" placeholder="Reps">` : '';
-    const weightInputHtml = showSetsReps && showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" data-index="${index}" data-set-index="${activeSetIndex}" value="${currentSet.weight || ''}" placeholder="Weight">` : '';
-    const customInputHtml = showSetsReps && showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="${activeSetIndex}" value="${currentSet.custom || ''}" placeholder="${exercise.customLabel || 'Custom'}">` : '';
-    const setNoteHtml = showSetsReps ? `<input type="text" class="form-control form-control-sm set-input set-note-input" data-index="${index}" data-set-index="${activeSetIndex}" value="${currentSet.note || ''}" placeholder="Note">` : '';
-    const removeSetButtonHtml = showSetsReps ? `<button class="btn btn-sm btn-outline-danger remove-set-btn" data-index="${index}" data-set-index="${activeSetIndex}">×</button>` : '';
-    const customOnlyHtml = customOnly ? `
-            <div class="single-set-row">
-              <input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${exercise.customLabel || 'Custom'}">
-            </div>
-          ` : '';
-    const setsContainerHtml = showSetsReps ? `
-            <div class="single-set-row">
-              ${navHtml}
-              ${repsInputHtml}
-              ${weightInputHtml}
-              ${customInputHtml}
-              ${setNoteHtml}
-              ${removeSetButtonHtml}
-            </div>
-          ` : customOnlyHtml;
+    const setControlsHtml = showSetsReps ? `
+      <button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>
+      <button type="button" class="set-counter" data-index="${index}" title="Next set">${activeSetIndex + 1}/${totalSets}</button>
+      <input type="number" class="form-control form-control-sm set-input set-reps-input" ${setAttrs} value="${currentSet.reps || ''}" placeholder="Reps">
+      ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${setAttrs} value="${currentSet.weight || ''}" placeholder="Weight">` : ''}
+      ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${setAttrs} value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : ''}
+      ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${setAttrs} value="${currentSet.note || ''}" placeholder="Note">` : ''}
+      <button type="button" class="btn btn-sm btn-outline-danger remove-set-btn" ${setAttrs}>×</button>
+    ` : (customOnly ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : '');
 
     exerciseDiv.innerHTML = `
-    <div class="exercise-row p-1">
-      <div class="exercise-name-col">
-        <span>${exercise.name}</span>
-      </div>
-      <div class="sets-col">
-        ${addSetButtonHtml}
-        <div class="sets-container" id="setsContainer_${index}">
-          ${setsContainerHtml}
-        </div>
-      </div>
-      <div class="volume-col">
-        ${volumeDetailsHtml}
-      </div>
-      <div class="note-col">
-        <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise note" data-index="${index}" value="${exercise.note || ''}">
-      </div>
-      <div class="remove-col">
-        <button class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
-      </div>
+    <div class="wk-row">
+      <span class="wk-name" title="${escapeExerciseHtml(exercise.name)}">${exerciseTitleHtml}</span>
+      ${variationButtonHtml}
+      ${setControlsHtml}
+      ${volumeDetailsHtml}
+      <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise note" data-index="${index}" value="${exercise.note || ''}">
+      <button type="button" class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
     </div>
     `;
-
     exerciseList.appendChild(exerciseDiv);
   });
 
   // Add intensity field with intensity note (global for the workout, not per exercise)
   const intensityDiv = document.createElement('div');
-  intensityDiv.className = 'introw';
+  intensityDiv.className = showWorkoutNotes ? 'introw' : 'introw hidden';
   intensityDiv.id = 'introwcss';
 
   intensityDiv.innerHTML = `
@@ -1507,15 +1845,40 @@ function renderExerciseList() {
   updateVolumeSummary();
 }
 
+function getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight) {
+  if (!showSetsReps) return '';
+  if (totalSets <= 0) return 'No sets yet';
+  return showWeightMoved
+    ? `${totalSets} sets • ${totalReps} reps • ${totalWeight} kg moved`
+    : `${totalSets} sets • ${totalReps} reps`;
+}
+
 setupDraftListeners();
 
 function setupDraftListeners() {
   exerciseList.addEventListener('click', (e) => {
+    const variationBtn = e.target.closest('.variation-btn');
+    const variationOption = e.target.closest('.variation-option');
+    if (variationBtn) {
+      const menu = variationBtn.parentElement.querySelector('.variation-menu');
+      const wasHidden = menu.classList.contains('hidden');
+      exerciseList.querySelectorAll('.variation-menu').forEach((m) => m.classList.add('hidden'));
+      menu.classList.toggle('hidden', !wasHidden);
+      return;
+    }
+    if (variationOption) {
+      const exercise = selectedExercises[Number(variationOption.dataset.index)];
+      if (exercise) {
+        exercise.variation = variationOption.dataset.variation;
+        saveWorkoutDraft();
+        renderExerciseList();
+      }
+      return;
+    }
     const addButton = e.target.closest('.add-set-btn');
     const removeButton = e.target.closest('.remove-btn');
     const removeSetButton = e.target.closest('.remove-set-btn');
-    const setUpButton = e.target.closest('.set-up-btn');
-    const setDownButton = e.target.closest('.set-down-btn');
+    const setCounterButton = e.target.closest('.set-counter');
 
     if (addButton) {
       addSetToExercise(addButton.dataset.index);
@@ -1538,22 +1901,10 @@ function setupDraftListeners() {
       return;
     }
 
-    if (setUpButton) {
-      const exerciseIndex = parseInt(setUpButton.dataset.index, 10);
-      const exercise = selectedExercises[exerciseIndex];
-      if (exercise && Array.isArray(exercise.setsList) && exercise.setsList.length > 0) {
-        exercise.activeSetIndex = Math.min((exercise.activeSetIndex || 0) + 1, exercise.setsList.length - 1);
-        renderExerciseList();
-        saveWorkoutDraft();
-      }
-      return;
-    }
-
-    if (setDownButton) {
-      const exerciseIndex = parseInt(setDownButton.dataset.index, 10);
-      const exercise = selectedExercises[exerciseIndex];
-      if (exercise && Array.isArray(exercise.setsList) && exercise.setsList.length > 0) {
-        exercise.activeSetIndex = Math.max((exercise.activeSetIndex || 0) - 1, 0);
+    if (setCounterButton) {
+      const exercise = selectedExercises[parseInt(setCounterButton.dataset.index, 10)];
+      if (exercise && Array.isArray(exercise.setsList) && exercise.setsList.length > 1) {
+        exercise.activeSetIndex = ((exercise.activeSetIndex || 0) + 1) % exercise.setsList.length;
         renderExerciseList();
         saveWorkoutDraft();
       }
@@ -1610,6 +1961,11 @@ function setupDraftListeners() {
       saveWorkoutDraft();
       return;
     }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('.variation-picker')) return;
+    exerciseList.querySelectorAll('.variation-menu').forEach((m) => m.classList.add('hidden'));
   });
 }
 
@@ -1778,7 +2134,7 @@ function updateVolumeSummary() {
     const totalSets = setsList.length;
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
-    const label = showSetsReps && totalSets > 0 ? `${totalSets} sets • ${totalReps} reps • ${totalWeight} kg moved` : (showSetsReps ? 'No sets yet' : '');
+    const label = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
 
     const labelEl = exerciseDiv.querySelector('.volume-details');
     if (labelEl) {
@@ -1825,6 +2181,8 @@ function addDraftListeners() {
 // Get elements// Get elements// Get elements
 const toggleFormBtn = document.getElementById("toggleFormBtn");
 const addExerciseSection = document.getElementById("addExerciseSection");
+const addEditToolbarButtons = document.getElementById("addEditToolbarButtons");
+const exerciseActionButtons = document.getElementById("exerciseActionButtons");
 const workoutEditorBtn = document.getElementById("showeditorbtn");
 const exoEditorBtn = document.getElementById("showexoeditorbtn");
 const workoutEditorSection = document.getElementById("editorsection");
@@ -1833,129 +2191,55 @@ const categorySelector = document.getElementById("categorySelector");
 const typeSelector = document.getElementById("typeSelector");
 const exerciseNotesSection = document.getElementById("exercisenotessection");
 
-// Toggle form section and show/hide the two editor toggle buttons
-toggleFormBtn.addEventListener("click", () => {
-  addExerciseSection.classList.toggle("hidden");
-  toggleFormBtn.textContent = addExerciseSection.classList.contains("hidden") ? "Add and Edit" : "Hide";
+// Reflect which panel is open: active toolbar buttons, and the exercise Save/Delete actions.
+function syncAddEditToolbar() {
+  const workoutOpen = !workoutEditorSection.classList.contains("hidden");
+  const exerciseOpen = !exerciseEditorSection.classList.contains("hidden");
+  const addFormOpen = !addExerciseFormWrapper.classList.contains("hidden");
+  workoutEditorBtn.classList.toggle("exo-btn-active", workoutOpen);
+  exoEditorBtn.classList.toggle("exo-btn-active", exerciseOpen);
+  toggleAddExerciseFormBtn.classList.toggle("exo-btn-active", addFormOpen);
+  exerciseActionButtons.classList.toggle("hidden", !exerciseOpen);
+}
 
-  if (addExerciseSection.classList.contains("hidden")) {
-    workoutEditorBtn.classList.add("hidden");
-    exoEditorBtn.classList.add("hidden");
+// Toggle the whole Add and Edit toolbar ("Hide" collapses every panel)
+toggleFormBtn.addEventListener("click", () => {
+  const isOpening = addEditToolbarButtons.classList.contains("hidden");
+  addEditToolbarButtons.classList.toggle("hidden", !isOpening);
+  toggleFormBtn.textContent = isOpening ? "Hide" : "Add and Edit";
+
+  if (!isOpening) {
+    addExerciseFormWrapper.classList.add("hidden");
     workoutEditorSection.classList.add("hidden");
     exerciseEditorSection.classList.add("hidden");
-    workoutEditorBtn.textContent = "Workout Editor";
-    exoEditorBtn.textContent = "Exercise Editor";
-  } else {
-    workoutEditorBtn.classList.remove("hidden");
-    exoEditorBtn.classList.remove("hidden");
   }
+  syncAddEditToolbar();
 });
 
 // Toggle Workout Editor section
 workoutEditorBtn.addEventListener("click", () => {
   workoutEditorSection.classList.toggle("hidden");
   exerciseEditorSection.classList.add("hidden");
-  workoutEditorBtn.textContent = workoutEditorSection.classList.contains("hidden") ? "Workout Editor" : "Hide Workout Editor";
-  exoEditorBtn.textContent = "Exercise Editor";
+  syncAddEditToolbar();
 });
 
 // Toggle Exercise Editor section
 exoEditorBtn.addEventListener("click", () => {
   exerciseEditorSection.classList.toggle("hidden");
   workoutEditorSection.classList.add("hidden");
-  exoEditorBtn.textContent = exerciseEditorSection.classList.contains("hidden") ? "Exercise Editor" : "Hide Exercise Editor";
-  workoutEditorBtn.textContent = "Workout Editor";
+  syncAddEditToolbar();
 });
 
-// Function to load the focus area note
-function loadFocusAreaNote() {
-  const selectedFocusArea = categorySelector.value;
-  exerciseNotesSection.innerHTML = ""; // Clear existing notes section
-
-  if (selectedFocusArea) {
-    const notesTextarea = document.createElement("textarea");
-    notesTextarea.setAttribute("id", "notesInput");
-    notesTextarea.style.width = "450px";
-    notesTextarea.style.height = "100px";
-    notesTextarea.style.marginTop = "10px";
-
-    database.ref("focusareas").child(selectedFocusArea).once("value", (snapshot) => {
-      const data = snapshot.val();
-      if (data && typeof data === "object" && data.note !== undefined && data.note.trim() !== "") {
-        notesTextarea.value = data.note; // Load existing note
-        notesTextarea.setAttribute("placeholder", ""); // No placeholder if note exists
-      } else {
-        notesTextarea.value = ""; // No note exists
-        notesTextarea.setAttribute("placeholder", `Notes for ${selectedFocusArea}`); // Show placeholder
-      }
-    });
-
-    exerciseNotesSection.appendChild(notesTextarea);
-  }
+if (toggleAddExerciseFormBtn) {
+  toggleAddExerciseFormBtn.addEventListener("click", syncAddEditToolbar);
 }
-
-// Listen for changes on the category selector
-categorySelector.addEventListener("change", loadFocusAreaNote);
-
-// Delay loading of notes when switching to "Focus Areas"
-typeSelector.addEventListener("change", () => {
-  if (typeSelector.value === "focusareas") {
-    setTimeout(() => {
-      loadFocusAreaNote();
-    }, 500); // Short delay ensures categorySelector value updates first
-  } else {
-    exerciseNotesSection.innerHTML = ""; // Hide notes when switching to "Exercises"
-  }
-});
-
-
-
-// Save changes made to the current exercise back to Firebase
-function saveexo() {
-  if (exerciseKeys.length === 0) return;
-  var exerciseID = exerciseKeys[currentExerciseIndex];
-  var refPath = "/" + currentExerciseType + "/" + currentExerciseCategory + "/" + exerciseID;
-
-  var fields = Array.from(document.querySelectorAll('.field-checkbox'))
-    .filter(cb => cb.checked)
-    .map(cb => cb.value);
-
-  var updatedData = {
-    name: document.getElementById("exercise_name").value,
-    note: document.getElementById("exercise_note").value,
-  };
-
-  // Convert fields array to an object form for reliable Firebase storage (handles empty arrays)
-  updatedData.fields = {};
-  if (Array.isArray(fields) && fields.length > 0) {
-    fields.forEach((f, i) => { updatedData.fields[i] = f; });
-  }
-
-  var customLabelInput = document.getElementById("exercise_custom_label");
-  if (fields.includes('custom') && customLabelInput) {
-    updatedData.customLabel = customLabelInput.value || '';
-  } else {
-    updatedData.customLabel = '';
-  }
-
-  database.ref(refPath).update(updatedData)
-    .then(() => {
-      if (typeSelector.value === "focusareas") {
-        var selectedFocusArea = categorySelector.value;
-        var notesTextarea = document.getElementById("notesInput");
-        if (selectedFocusArea && notesTextarea) {
-          return database.ref("focusareas").child(selectedFocusArea).update({ note: notesTextarea.value });
-        }
-      }
-      return Promise.resolve();
-    })
-    .then(() => {
-      alert("Exercise updated successfully!");
-      displayExercise();
-    })
-    .catch(error => alert("Error updating exercise: " + error.message));
+const hideAddExerciseFormBtn = document.getElementById("hideAddExerciseFormBtn");
+if (hideAddExerciseFormBtn) {
+  hideAddExerciseFormBtn.addEventListener("click", () => {
+    addExerciseFormWrapper.classList.add("hidden");
+    syncAddEditToolbar();
+  });
 }
-
 
 //////////////////////////////////////////////////////////////////////// Add and edit section functionality
 
@@ -2001,6 +2285,7 @@ function renderSavedWorkouts() {
 
       const exercises = [...(workout.exercises || [])].reverse().map((e) => {
         const name = e.name || 'Unknown';
+        const variation = e.variation ? ` <span style="color:#555;">(${escapeExerciseHtml(e.variation)})</span>` : '';
         const noteText = e.note ? ` <span style="color: red;">${e.note}</span>` : '';
 
         if (Array.isArray(e.setsList) && e.setsList.length > 0) {
@@ -2015,7 +2300,7 @@ function renderSavedWorkouts() {
             const setNote = set.note ? ` (${set.note})` : '';
             return `${idx + 1}) ${reps}${weight}${setNote}`;
           }).join(', ');
-          return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>: ${summary}${noteText}${setDetails ? ` — ${setDetails}` : ''}</div>`;
+          return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>${variation}: ${summary}${noteText}${setDetails ? ` — ${setDetails}` : ''}</div>`;
         }
 
         const parts = [];
@@ -2023,7 +2308,7 @@ function renderSavedWorkouts() {
         if (e.reps) parts.push(`x ${e.reps} reps`);
         if (e.weight) parts.push(`@ ${e.weight}kg`);
         const legacyText = parts.join(' ');
-        return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>: ${legacyText}${noteText}</div>`;
+        return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>${variation}: ${legacyText}${noteText}</div>`;
       }).join('');
 
       const result = workout.result ? `<div style="margin:0.2rem 0 0 0; line-height:1.2;"><span style="color: darkorange;">Result: ${workout.result}</span></div>` : '';
@@ -2083,6 +2368,8 @@ function getToday() {
 
 //-////////////////////////////////////////////////////////////////////// last workout result field 
 function checkLastWorkoutResult() {
+  if (!showPostWorkoutNotes) return;
+
   const workoutsRef = database.ref('workouts');
 
   workoutsRef.orderByChild('date').limitToLast(1).once('value', snapshot => {
@@ -2192,12 +2479,13 @@ async function bootstrapPrivateApp() {
   emitPrivateBootstrapState('loading');
 
   try {
+    await loadShowWeightMovedSetting();
     await loadWorkoutBuilderSettings();
     await loadExerciseCategories();
     await loadExercises();
     await loadFocusAreas();
     loadWorkouts();
-    loadCategories(currentExerciseType);
+    loadCategories();
     await loadWorkoutDraft();
     renderSavedWorkouts();
     checkLastWorkoutResult();
@@ -2210,3 +2498,9 @@ async function bootstrapPrivateApp() {
 }
 
 bootstrapPrivateApp();
+
+
+
+
+
+

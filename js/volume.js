@@ -93,6 +93,43 @@ function getExerciseMuscleGroups(exercise) {
   return ['Core'];
 }
 
+let exerciseVolumeMappingsById = {};
+let exerciseVolumeMappingsByName = {};
+
+function normalizeExerciseVolumeMappings(mappings) {
+  const values = Array.isArray(mappings)
+    ? mappings
+    : (mappings && typeof mappings === 'object' ? Object.values(mappings) : []);
+  return values
+    .filter(mapping => mapping && typeof mapping.muscleGroup === 'string' && mapping.muscleGroup.trim())
+    .map(mapping => ({
+      variation: typeof mapping.variation === 'string' ? mapping.variation.trim() : '',
+      muscleGroup: mapping.muscleGroup.trim(),
+      weight: Math.max(Number(mapping.weight) || 0, 0)
+    }));
+}
+
+function buildExerciseVolumeIndex(exercises) {
+  exerciseVolumeMappingsById = {};
+  exerciseVolumeMappingsByName = {};
+  Object.entries(exercises || {}).forEach(([id, record]) => {
+    const mappings = normalizeExerciseVolumeMappings(record?.volumeMappings);
+    if (!mappings.length) return;
+    exerciseVolumeMappingsById[id] = mappings;
+    if (typeof record.name === 'string') exerciseVolumeMappingsByName[record.name.trim().toLowerCase()] = mappings;
+  });
+}
+
+// Variation-specific mappings win; otherwise the exercise's default (no variation) mappings apply.
+function getExerciseVolumeMappings(exercise) {
+  const mappings = (exercise.id && exerciseVolumeMappingsById[exercise.id])
+    || exerciseVolumeMappingsByName[getExerciseName(exercise).trim().toLowerCase()]
+    || [];
+  const variation = typeof exercise.variation === 'string' ? exercise.variation.trim() : '';
+  const variationMappings = variation ? mappings.filter(mapping => mapping.variation === variation) : [];
+  return variationMappings.length ? variationMappings : mappings.filter(mapping => mapping.variation === '');
+}
+
 function getExerciseSetMetrics(exercise) {
   if (!exercise) return { directSets: 0, effectiveSets: 0, contributions: {} };
 
@@ -106,6 +143,24 @@ function getExerciseSetMetrics(exercise) {
 
   if (directSets <= 0) {
     return { directSets: 0, effectiveSets: 0, contributions: {} };
+  }
+
+  const volumeMappings = getExerciseVolumeMappings(exercise);
+  if (volumeMappings.length) {
+    const mappedContributions = {};
+    volumeMappings.forEach(mapping => {
+      if (mapping.weight <= 0) return;
+      const entry = mappedContributions[mapping.muscleGroup] || { directSets: 0, effectiveSets: 0 };
+      if (mapping.weight >= 1) entry.directSets += directSets;
+      entry.effectiveSets += directSets * mapping.weight;
+      mappedContributions[mapping.muscleGroup] = entry;
+    });
+
+    return {
+      directSets: Object.values(mappedContributions).reduce((sum, contribution) => sum + contribution.directSets, 0),
+      effectiveSets: Object.values(mappedContributions).reduce((sum, contribution) => sum + contribution.effectiveSets, 0),
+      contributions: mappedContributions
+    };
   }
 
   const exerciseName = getExerciseName(exercise).toLowerCase();
@@ -336,7 +391,11 @@ function loadVolumeData() {
 
   if (!window.database) return;
 
-  window.database.ref('workouts').once('value').then(snapshot => {
+  Promise.all([
+    window.database.ref('workouts').once('value'),
+    window.database.ref('exercises').once('value').catch(() => null)
+  ]).then(([snapshot, exercisesSnapshot]) => {
+    buildExerciseVolumeIndex(exercisesSnapshot ? exercisesSnapshot.val() : null);
     const workouts = snapshot.val() || {};
     const rows = {};
 

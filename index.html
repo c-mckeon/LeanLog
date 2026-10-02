@@ -6,7 +6,7 @@
   <title> User Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-CkIX7t-V.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-CI706YVm.css">
 </head>
 <body>
   
@@ -35,6 +35,26 @@
     <button type="button" id="settingsGearBtn" class="settings-gear-btn" aria-label="Open settings" aria-expanded="false" aria-controls="settingsPanel">⚙</button>
     <div id="settingsPanel" class="settings-panel hidden" role="menu" aria-label="Site settings">
       <div class="settings-section-block">
+        <div class="settings-section-title">Workout Builder</div>
+        <label class="settings-checkbox-row" for="showWeightMovedSetting">
+          <input type="checkbox" id="showWeightMovedSetting" checked>
+          <span>Show weight moved</span>
+        </label>
+        <label class="settings-checkbox-row" for="showWorkoutNotesSetting">
+          <input type="checkbox" id="showWorkoutNotesSetting" checked>
+          <span>Show workout notes</span>
+        </label>
+        <label class="settings-checkbox-row" for="showSetNotesSetting">
+          <input type="checkbox" id="showSetNotesSetting" checked>
+          <span>Show set notes</span>
+        </label>
+        <label class="settings-checkbox-row" for="showPostWorkoutNotesSetting">
+          <input type="checkbox" id="showPostWorkoutNotesSetting" checked>
+          <span>Show post-workout notes</span>
+        </label>
+      </div>
+
+      <div class="settings-section-block">
         <div class="settings-section-title">Add and Edit</div>
         <label class="settings-checkbox-row" for="includeAddEditSetting">
           <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked>
@@ -56,7 +76,12 @@
           <input type="checkbox" id="includeCalendarSetting" data-section-setting="calendar" checked>
           <span>Include section</span>
         </label>
-        <button type="button" id="showWholeYearSetting" class="btn btn-sm btn-outline-secondary settings-toggle-button" aria-pressed="false">Show whole year</button>
+        <label class="settings-checkbox-row" for="showWholeYearSetting">
+          <input type="checkbox" id="showWholeYearSetting">
+          <span>Show full year</span>
+        </label>
+        <label class="settings-label" for="calendarStartWeekSetting" style="margin-top: 8px;">Start from week</label>
+        <input type="number" id="calendarStartWeekSetting" class="form-control form-control-sm settings-select" min="1" max="53" step="1" value="1">
       </div>
 
       <div class="settings-section-block">
@@ -162,26 +187,46 @@
   <div class="row p-3" id="addExerciseSectiondiv">
     <!-- Add and Edit Section -->
     <div class="col-12">
-        <button style="width: 135px;" id="toggleFormBtn">Add and Edit</button>
-        <section id="addExerciseSection" style="margin-top: 10px;" class="hidden">
-          <div id="addExerciseFormWrapper" class="hidden" style="margin-top: 10px;">
-            <form id="addExerciseForm" style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                <label for="newExerciseName">Exercise Name:</label>
-                <input type="text" id="newExerciseName" placeholder="Enter exercise name" required>
-                <input type="text" id="newExerciseNote" placeholder="Add exercise note?">
-                <div class="row align-items-center">
-                  <div class="col-auto">
-                    <label for="exerciseCategory">Choose Category:</label>
-                  </div>
-                  <div class="col">
-                    <select id="exerciseCategory" class="form-control"></select>
-                  </div>
+        <div class="exo-toolbar">
+          <button type="button" style="width: 135px;" id="toggleFormBtn">Add and Edit</button>
+          <span id="addEditToolbarButtons" class="exo-toolbar-group hidden">
+            <button type="button" id="showeditorbtn" class="exo-btn">Workout Editor</button>
+            <button type="button" id="showexoeditorbtn" class="exo-btn">Exercise Editor</button>
+            <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn exo-btn-primary">＋ Add Exercise</button>
+          </span>
+          <span class="exo-toolbar-spacer"></span>
+          <span id="exerciseActionButtons" class="exo-toolbar-group hidden">
+            <button type="button" id="saveExoBtn" class="exo-btn exo-btn-primary">Save Changes</button>
+            <button type="button" id="deleteExoBtn" class="exo-btn exo-btn-danger">Delete Exercise</button>
+          </span>
+        </div>
+        <section id="addExerciseSection" style="margin-top: 10px;">
+          <div id="addExerciseFormWrapper" class="hidden exo-card" style="margin-top: 10px;">
+            <div class="exo-add-header">
+              <span class="exo-add-icon" aria-hidden="true">＋</span>
+              <div>
+                <h3>Add Exercise</h3>
+                <p class="exo-hint">Create a new exercise and add it to your library.</p>
+              </div>
+            </div>
+            <form id="addExerciseForm" class="exo-add-form">
+                <div class="exo-add-field">
+                  <label for="newExerciseName">Exercise Name</label>
+                  <input type="text" id="newExerciseName" placeholder="Enter exercise name" required>
+                </div>
+                <div class="exo-add-field">
+                  <label for="newExerciseNote">Add exercise note</label>
+                  <input type="text" id="newExerciseNote" placeholder="Add exercise note?">
+                </div>
+                <div class="exo-add-field">
+                  <label for="exerciseCategory">Choose Category</label>
+                  <select id="exerciseCategory"></select>
                 </div>
 
-                <div class="row align-items-center">
+                <div class="row align-items-center" hidden>
                   <div class="col-auto">
                     <label>
-                      <input type="checkbox" id="focusCheckbox"> Focus Areas:
+                      <input type="checkbox" id="focusCheckbox" hidden> Focus Areas:
                     </label>
                   </div>
                   <!-- Preserve the focus container here -->
@@ -191,14 +236,11 @@
                     </select>
                   </div>
                 </div>
-                
-                
-                <button type="button" id="saveNewExerciseBtn">Add Exercise</button>
+
+                <button type="button" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">＋ Add Exercise</button>
+                <button type="button" id="hideAddExerciseFormBtn" class="exo-btn">˄ Hide Add Exercise Form</button>
             </form>
           </div>
-            <button style="width: 160px; margin-top: 10px;" id="showeditorbtn" >Workout Editor</button>
-            <button style="width: 160px; margin-top: 10px;" id="showexoeditorbtn" >Exercise Editor</button>
-            <button type="button" id="toggleAddExerciseFormBtn" style="width: 160px; margin-top: 10px;">Add Exercise</button>
         </section> 
     </div>
     <!-- Editor Section (Appears Below) -->
@@ -220,23 +262,56 @@
 
               <!-- Your exercise management section -->
               <div id="exoeditorsection">
-                <button type="button" id="saveExoBtn">💾 Save changes</button>
-                <button type="button" id="deleteExoBtn">🗑️ Delete exercise</button><br>
-              <div style="margin-top: 10px; border-left: 10px solid rgb(255, 157, 0); padding-left: 10px;">
+              <div>
                 <div class="mb-2">
-                  <select style="margin-top: 10px;" id="typeSelector">
+                  <select style="margin-top: 10px;" id="typeSelector" hidden>
                     <option value="exercises">Exercises</option>
                     <option value="focusareas">Focus Areas</option>
                   </select>
   
-                  <!-- Dropdown for selecting a category -->
-                  <select id="categorySelector"></select>
-                  <!-- Dropdown for selecting a specific exercise -->
-                  <select id="exerciseSelector"></select>
+                  <!-- Category → Exercise → Variation -->
+                  <div id="exerciseHierarchyRow" class="exo-card exo-hierarchy">
+                    <div class="exo-step"><span class="exo-step-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+                      <div class="exo-step-body">
+                        <label for="categorySelector">Category</label>
+                        <select id="categorySelector" aria-label="Category"></select>
+                      </div>
+                    </div>
+                    <span class="exo-arrow" aria-hidden="true">›</span>
+                    <div class="exo-step"><span class="exo-step-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 9v6M5 6v12M19 6v12M22 9v6M5 12h14"/></svg></span>
+                      <div class="exo-step-body">
+                        <label for="exerciseSelector">Exercise</label>
+                        <select id="exerciseSelector" aria-label="Exercise"></select>
+                      </div>
+                    </div>
+                    <span class="exo-arrow" aria-hidden="true">›</span>
+                    <div class="exo-step"><span class="exo-step-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></span>
+                      <div class="exo-step-body">
+                        <label for="variationSelector">Variation</label>
+                        <select id="variationSelector" aria-label="Variation">
+                          <option value="">Default (no variation)</option>
+                        </select>
+                        <div class="exo-step-actions">
+                          <button type="button" id="addExerciseVariationBtn" class="exo-btn exo-btn-sm">Add variation</button>
+                          <button type="button" id="removeExerciseVariationBtn" class="exo-btn exo-btn-sm exo-btn-danger" disabled>Remove</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
-                <div id="exerciseTrackingOptions" style="margin-top: 10px;"></div>
+                </div>
                 <div id="exercisenotessection" style="margin-top: 10px;"></div>
-                <div id="exerciseeditorsection" style="margin-top: 10px;"></div>
+                <div class="exo-columns">
+                  <section id="exerciseeditorsection" class="exo-card"></section>
+                  <section id="volumeTrackingSection" class="exo-card"></section>
+                </div>
+                <div class="exo-card exo-footer">
+                  <span id="exerciseCounter">Exercise 0 of 0</span>
+                  <span>
+                    <button type="button" id="prevExerciseBtn" class="btn btn-sm btn-outline-secondary" aria-label="Previous exercise">‹</button>
+                    <button type="button" id="nextExerciseBtn" class="btn btn-sm btn-outline-secondary" aria-label="Next exercise">›</button>
+                  </span>
+                </div>
               </div></div>
 
           </div>
@@ -380,7 +455,7 @@
 }
 
 .exercise-name-col {
-    min-width: 220px;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
 }
@@ -432,6 +507,16 @@
 
 
 /* Allow the actual page to be wider than the viewport */
+html {
+  scrollbar-gutter: stable;
+}
+
+@supports not (scrollbar-gutter: stable) {
+  html {
+    overflow-y: scroll;
+  }
+}
+
 html,
 body {
     overflow-x: auto;
@@ -515,3 +600,12 @@ body {
 
 </body>
 </html>
+
+
+
+
+
+
+
+
+

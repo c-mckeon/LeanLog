@@ -6,7 +6,7 @@
   <title> User Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-CI706YVm.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-9keuaRl7.css">
 </head>
 <body>
   
@@ -119,7 +119,7 @@
   <section id="workoutBuilderSection">
   <!-- Workout Management Section -->
   <div id="workoutManagement">
-    <div style="margin-left: 20px;"><h2>Start Workout</h2></div>
+    <div style="margin-left: 20px;"><h2></h2></div>
    
     <form id="workoutForm"> 
       <div class="row p-3">
@@ -446,10 +446,10 @@
 
 .exercise-row {
     display: grid;
-    grid-template-columns: 220px 500px 210px 200px 72px;
+    grid-template-columns: 200px var(--sets-w, 500px) 210px 200px 48px;
     gap: 0.75rem;
     width: max-content;
-    min-width: 1200px;
+    min-width: 0;
     align-items: center;
     white-space: nowrap;
 }
@@ -464,7 +464,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    min-width: 500px;
+    min-width: 0;
 }
 
 .volume-col {
@@ -600,6 +600,7 @@ body {
 
 </body>
 </html>
+
 
 
 

@@ -308,6 +308,7 @@ if (showWeightMovedCheckbox) {
     const previousValue = showWeightMoved;
     showWeightMoved = showWeightMovedCheckbox.checked;
     updateVolumeSummary();
+    if (typeof renderExerciseList === 'function' && exerciseList) renderExerciseList();
 
     try {
       await database.ref('settings/volume/showWeightMoved').set(showWeightMoved);
@@ -1766,6 +1767,19 @@ document.getElementById("showeditorbtn").addEventListener("click", function() {
 //-////////////////////////////////////////////////////////////////////// Workout creation and saving
 
 
+// Size the sets column to the widest row so every row's columns line up
+function alignExerciseColumns() {
+  const cols = exerciseList.querySelectorAll('.wk-sets');
+  let widest = 0;
+  cols.forEach((col) => {
+    col.style.width = 'max-content';
+    widest = Math.max(widest, Math.ceil(col.getBoundingClientRect().width));
+    col.style.width = '';
+  });
+  exerciseList.classList.toggle('compact-volume', !showWeightMoved);
+  exerciseList.style.setProperty('--sets-w', widest ? ('' + widest + 'px') : '');
+}
+
 // Render the exercise list dynamically, including intensity note field
 function renderExerciseList() {
   exerciseList.innerHTML = ''; // Clear the list
@@ -1790,7 +1804,7 @@ function renderExerciseList() {
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
     const volumeLabel = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
-    const volumeDetailsHtml = showSetsReps ? `<span class="volume-details">${volumeLabel || 'No sets yet'}</span>` : '';
+    const volumeDetailsHtml = showSetsReps ? `<span class="volume-details">${volumeLabel || 'No sets yet'}</span>` : '<span class="volume-details"></span>';
     const variations = normalizeExerciseVariations(exerciseMetadataById[exercise.id]?.variations ?? exercise.variations);
     const variationButtonHtml = variations.length
       ? `<div class="variation-picker"><button type="button" class="btn btn-sm btn-outline-secondary variation-btn" data-index="${index}" aria-label="Choose variation for ${escapeExerciseHtml(exercise.name)}" title="Variation"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></button><div class="variation-menu hidden">${['', ...variations].map((variation) => `<button type="button" class="variation-option${(exercise.variation || '') === variation ? ' active' : ''}" data-index="${index}" data-variation="${escapeExerciseHtml(variation)}">${variation ? escapeExerciseHtml(variation) : 'Default (none)'}</button>`).join('')}</div></div>`
@@ -1803,7 +1817,9 @@ function renderExerciseList() {
 
     const setControlsHtml = showSetsReps ? `
       <button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>
-      <button type="button" class="set-counter" data-index="${index}" title="Next set">${activeSetIndex + 1}/${totalSets}</button>
+      <button type="button" class="btn btn-sm btn-outline-secondary set-up-btn" data-index="${index}" ${activeSetIndex < totalSets - 1 ? '' : 'disabled'}>▲</button>
+      <span class="set-counter" data-index="${index}">${activeSetIndex + 1}/${totalSets}</span>
+      <button type="button" class="btn btn-sm btn-outline-secondary set-down-btn" data-index="${index}" ${activeSetIndex > 0 ? '' : 'disabled'}>▼</button>
       <input type="number" class="form-control form-control-sm set-input set-reps-input" ${setAttrs} value="${currentSet.reps || ''}" placeholder="Reps">
       ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${setAttrs} value="${currentSet.weight || ''}" placeholder="Weight">` : ''}
       ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${setAttrs} value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : ''}
@@ -1814,8 +1830,7 @@ function renderExerciseList() {
     exerciseDiv.innerHTML = `
     <div class="wk-row">
       <span class="wk-name" title="${escapeExerciseHtml(exercise.name)}">${exerciseTitleHtml}</span>
-      ${variationButtonHtml}
-      ${setControlsHtml}
+      <div class="wk-sets">${variationButtonHtml}${setControlsHtml}</div>
       ${volumeDetailsHtml}
       <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise note" data-index="${index}" value="${exercise.note || ''}">
       <button type="button" class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
@@ -1842,6 +1857,7 @@ function renderExerciseList() {
   `;
 
   exerciseList.appendChild(intensityDiv); // Append the intensity field
+  alignExerciseColumns();
   updateVolumeSummary();
 }
 
@@ -1872,6 +1888,20 @@ function setupDraftListeners() {
         exercise.variation = variationOption.dataset.variation;
         saveWorkoutDraft();
         renderExerciseList();
+      }
+      return;
+    }
+    const setStepButton = e.target.closest('.set-up-btn, .set-down-btn');
+    if (setStepButton) {
+      const exercise = selectedExercises[parseInt(setStepButton.dataset.index, 10)];
+      if (exercise && Array.isArray(exercise.setsList)) {
+        const step = setStepButton.classList.contains('set-up-btn') ? 1 : -1;
+        const next = (exercise.activeSetIndex || 0) + step;
+        if (next >= 0 && next < exercise.setsList.length) {
+          exercise.activeSetIndex = next;
+          renderExerciseList();
+          saveWorkoutDraft();
+        }
       }
       return;
     }
@@ -2498,6 +2528,10 @@ async function bootstrapPrivateApp() {
 }
 
 bootstrapPrivateApp();
+
+
+
+
 
 
 

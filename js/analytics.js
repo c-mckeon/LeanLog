@@ -6,19 +6,9 @@ function formatDate(dateString) {
 }
 
 // Function to get the background color based on intensity (light to dark green)
-function getIntensityColor(intensity) {
-  intensity = intensity || 5; // Default intensity is 5 if not provided
-  intensity = Math.max(1, Math.min(10, intensity)); // Clamp intensity between 1 and 10
-  if (intensity === 1) return 'rgb(230, 240, 230)'; // Intensity 1: White
-  if (intensity === 2) return 'rgb(210, 240, 206)'; // Intensity 2: Light Gray
-  if (intensity === 3) return 'rgb(183, 240, 183)'; // Intensity 3: Pale Green
-  if (intensity === 4) return 'rgb(160, 236, 160)'; // Intensity 4: Lighter Green
-  if (intensity === 5) return 'rgb(130, 230, 130)'; // Intensity 5: Light Green
-  if (intensity === 6) return 'rgb(105, 220, 105)'; // Intensity 6: Medium Light Green
-  if (intensity === 7) return 'rgb(100, 205, 100)';  // Intensity 7: Medium Green
-  if (intensity === 8) return 'rgb(85, 195, 85)';  // Intensity 8: Darker Green
-  if (intensity === 9) return 'rgb(70, 185, 70)';   // Intensity 9: Dark Green
-  if (intensity === 10) return 'rgb(65, 175, 65)';  // Intensity 10: Darkest Green
+function getIntensityColor() {
+  // Every workout day uses the same green regardless of score
+  return 'rgb(130, 230, 130)';
 }
 
 // Select only the button with ID "showchartbtn"
@@ -365,22 +355,6 @@ async function generatevisuals() {
 
 
 
-// Function to determine the intensity color based on the workout intensity
-function getIntensityColor(intensity) {
-  intensity = intensity || 5; // Default intensity is 5 if not provided
-  intensity = Math.max(1, Math.min(10, intensity)); // Clamp intensity between 1 and 10
-  if (intensity === 1) return 'rgb(230, 240, 230)'; // Intensity 1: Light Green
-  if (intensity === 2) return 'rgb(210, 240, 206)'; // Intensity 2: Light Green
-  if (intensity === 3) return 'rgb(183, 240, 183)'; // Intensity 3: Light Green
-  if (intensity === 4) return 'rgb(160, 236, 160)'; // Intensity 4: Green
-  if (intensity === 5) return 'rgb(130, 230, 130)'; // Intensity 5: Green
-  if (intensity === 6) return 'rgb(105, 220, 105)'; // Intensity 6: Dark Green
-  if (intensity === 7) return 'rgb(100, 205, 100)'; // Intensity 7: Dark Green
-  if (intensity === 8) return 'rgb(85, 195, 85)'; // Intensity 8: Dark Green
-  if (intensity === 9) return 'rgb(70, 185, 70)'; // Intensity 9: Dark Green
-  if (intensity === 10) return 'rgb(65, 175, 65)'; // Intensity 10: Dark Green
-  return 'rgb(255, 255, 255)'; // Default to white
-}
 
 let showWholeYearCalendar = false;
 let calendarStartWeek = 1;

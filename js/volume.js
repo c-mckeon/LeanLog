@@ -3,7 +3,12 @@ const volumeMonthNames = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
-const muscleGroups = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Core', 'Legs'];
+const defaultMuscleGroups = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Core', 'Legs'];
+// Target groups the user created in the exercise editor; the volume table falls back to the defaults until some exist.
+// Groups saved at settings/volume/muscleGroups (null until the user has any saved).
+let storedMuscleGroups = null;
+let userMuscleGroups = [];
+let muscleGroups = defaultMuscleGroups;
 const exerciseMatrixDefaults = [
   { exercise: 'Bench Press', muscleGroups: { Chest: 0 } },
   { exercise: 'Dips', muscleGroups: { Chest: 0, Triceps: 0 } },
@@ -118,6 +123,30 @@ function buildExerciseVolumeIndex(exercises) {
     exerciseVolumeMappingsById[id] = mappings;
     if (typeof record.name === 'string') exerciseVolumeMappingsByName[record.name.trim().toLowerCase()] = mappings;
   });
+  updateUserMuscleGroups(exercises);
+}
+
+function loadStoredMuscleGroups() {
+  if (!window.database) return Promise.resolve();
+  return window.database.ref('settings/volume/muscleGroups').once('value').then(snapshot => {
+    const value = snapshot.val();
+    storedMuscleGroups = value && typeof value === 'object'
+      ? Object.values(value).filter(name => typeof name === 'string' && name.trim()).map(name => name.trim())
+      : null;
+  }).catch(() => {});
+}
+
+function updateUserMuscleGroups(exercises) {
+  if (storedMuscleGroups) {
+    userMuscleGroups = [...storedMuscleGroups];
+  } else {
+    const groups = new Set();
+    Object.values(exercises || {}).forEach(record => {
+      normalizeExerciseVolumeMappings(record?.volumeMappings).forEach(mapping => groups.add(mapping.muscleGroup));
+    });
+    userMuscleGroups = Array.from(groups).sort((a, b) => a.localeCompare(b));
+  }
+  muscleGroups = userMuscleGroups.length ? userMuscleGroups : defaultMuscleGroups;
 }
 
 // Variation-specific mappings win; otherwise the exercise's default (no variation) mappings apply.
@@ -393,7 +422,8 @@ function loadVolumeData() {
 
   Promise.all([
     window.database.ref('workouts').once('value'),
-    window.database.ref('exercises').once('value').catch(() => null)
+    window.database.ref('exercises').once('value').catch(() => null),
+    loadStoredMuscleGroups()
   ]).then(([snapshot, exercisesSnapshot]) => {
     buildExerciseVolumeIndex(exercisesSnapshot ? exercisesSnapshot.val() : null);
     const workouts = snapshot.val() || {};
@@ -487,7 +517,6 @@ const volumeToggleButton = document.getElementById('toggleVolumeBtn');
 const volumeArea = document.getElementById('volumearea');
 const volumePrevMonthButton = document.getElementById('volumePrevMonth');
 const volumeNextMonthButton = document.getElementById('volumeNextMonth');
-const showMatrixSettingCheckbox = document.getElementById('showMatrixSetting');
 const muscleMatrixArea = document.getElementById('muscleMatrixArea');
 const saveMuscleMatrixButton = document.getElementById('saveMuscleMatrixBtn');
 const muscleMatrixBody = document.getElementById('muscleMatrixBody');
@@ -505,12 +534,57 @@ function renderTargetEditor() {
   const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
   const monthTargets = monthlyTargets[monthKey] || {};
 
-  targetEditorRows.innerHTML = muscleGroups.map(group => `
+  if (!userMuscleGroups.length) {
+    targetEditorRows.innerHTML = '<div class="settings-empty">No target groups yet. Add them in the exercise editor.</div>';
+    return;
+  }
+
+  const header = `
+    <div class="target-editor-header">
+      <span>Muscle Group</span>
+      <span>Sets</span>
+    </div>`;
+  targetEditorRows.innerHTML = header + userMuscleGroups.map(group => `
     <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px;">
-      <label style="font-size:0.9rem; margin:0;">${group}</label>
-      <input type="number" class="form-control form-control-sm" style="width:80px;" data-target-group="${group}" value="${Number(monthTargets[group] ?? defaultVolumeTarget)}" min="0" step="1">
+      <label style="font-size:0.9rem; margin:0;">${escapeExerciseHtml(group)}</label>
+      <input type="number" class="form-control form-control-sm" style="width:80px;" data-target-group="${escapeExerciseHtml(group)}" value="${Number(monthTargets[group] ?? defaultVolumeTarget)}" min="0" step="1">
     </div>
   `).join('');
+}
+
+function addTargetMuscleGroup() {
+  if (!window.database) return;
+  const name = (prompt('New muscle group name:') || '').trim();
+  if (!name) return;
+  if (userMuscleGroups.some(group => group.toLowerCase() === name.toLowerCase())) {
+    alert(`${name} already exists.`);
+    return;
+  }
+
+  captureTargetInputs();
+  const next = [...userMuscleGroups, name];
+  window.database.ref('settings/volume/muscleGroups').set(next).then(() => {
+    storedMuscleGroups = next;
+    userMuscleGroups = [...next];
+    muscleGroups = userMuscleGroups;
+    // Make the exercise editor reload the shared list the next time it renders.
+    if (typeof volumeGroupsLoaded !== 'undefined') volumeGroupsLoaded = false;
+    renderTargetEditor();
+    if (volumeArea && !volumeArea.classList.contains('hidden')) loadVolumeData();
+  }).catch(error => {
+    console.error('Error saving muscle group', error);
+    alert('Could not save the muscle group');
+  });
+}
+
+// Keep unsaved target values when the editor re-renders.
+function captureTargetInputs() {
+  const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
+  const pending = { ...(monthlyTargets[monthKey] || {}) };
+  targetEditorRows?.querySelectorAll('[data-target-group]').forEach(input => {
+    pending[input.dataset.targetGroup] = Number(input.value || defaultVolumeTarget);
+  });
+  monthlyTargets[monthKey] = pending;
 }
 
 function populateTargetMonthOptions() {
@@ -539,6 +613,13 @@ function populateTargetMonthOptions() {
 function loadVolumeTargets() {
   if (!window.database) return;
 
+  Promise.all([loadStoredMuscleGroups(), window.database.ref('exercises').once('value')])
+    .then(([, snapshot]) => {
+      updateUserMuscleGroups(snapshot.val());
+      renderTargetEditor();
+    })
+    .catch(() => {});
+
   window.database.ref('volumeTargets').once('value').then(snapshot => {
     const data = snapshot.val() || {};
     monthlyTargets = data;
@@ -560,18 +641,19 @@ function saveVolumeTargets() {
   const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
   const nextMonthTargets = { ...(monthlyTargets[monthKey] || {}) };
 
-  muscleGroups.forEach(group => {
-    const input = targetEditorRows?.querySelector(`[data-target-group="${group}"]`);
-    nextMonthTargets[group] = Number(input?.value || defaultVolumeTarget);
+  targetEditorRows?.querySelectorAll('[data-target-group]').forEach(input => {
+    nextMonthTargets[input.dataset.targetGroup] = Number(input.value || defaultVolumeTarget);
   });
 
   monthlyTargets[monthKey] = nextMonthTargets;
 
+  const status = document.getElementById('targetsSaveStatus');
   window.database.ref('volumeTargets').set(monthlyTargets).then(() => {
-    alert('Targets saved');
+    if (status) status.textContent = 'Saved';
+    if (volumeArea && !volumeArea.classList.contains('hidden')) loadVolumeData();
   }).catch(error => {
     console.error('Error saving targets', error);
-    alert('Could not save targets');
+    if (status) status.textContent = 'Could not save';
   });
 }
 
@@ -721,15 +803,28 @@ function setMuscleMatrixVisibility(show) {
   }
 }
 
-if (showMatrixSettingCheckbox && muscleMatrixArea) {
-  showMatrixSettingCheckbox.checked = !muscleMatrixArea.classList.contains('hidden');
-  showMatrixSettingCheckbox.addEventListener('change', () => {
-    setMuscleMatrixVisibility(showMatrixSettingCheckbox.checked);
+const volumeTargetsToggleBtn = document.getElementById('volumeTargetsToggleBtn');
+const volumeTargetsPanel = document.getElementById('volumeTargetsPanel');
+if (volumeTargetsToggleBtn && volumeTargetsPanel) {
+  volumeTargetsToggleBtn.addEventListener('click', () => {
+    const opening = volumeTargetsPanel.classList.contains('hidden');
+    volumeTargetsPanel.classList.toggle('hidden', !opening);
+    volumeTargetsToggleBtn.setAttribute('aria-expanded', String(opening));
+    if (opening) {
+      const status = document.getElementById('targetsSaveStatus');
+      if (status) status.textContent = '';
+      loadVolumeTargets();
+    }
   });
 }
 
 if (saveMuscleMatrixButton) {
   saveMuscleMatrixButton.addEventListener('click', saveMuscleMatrix);
+}
+
+const addTargetGroupButton = document.getElementById('addTargetGroupBtn');
+if (addTargetGroupButton) {
+  addTargetGroupButton.addEventListener('click', addTargetMuscleGroup);
 }
 
 if (saveTargetsButton) {

@@ -20,7 +20,32 @@ class ApiSnapshot {
   }
 }
 
+let authStatusPromise = null;
+
+// Single shared /api/me call so data requests can be skipped when signed out.
+function getAuthStatus() {
+  if (!authStatusPromise) {
+    authStatusPromise = fetch(`${apiBackendOrigin}/api/me`, { credentials: 'include' })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Auth status request failed with ${response.status}`);
+        return response.json();
+      });
+  }
+  return authStatusPromise;
+}
+window.getAuthStatus = getAuthStatus;
+
 async function apiRequest(path, options = {}) {
+  let status = null;
+  try {
+    status = await getAuthStatus();
+  } catch (error) {
+    // Auth service unreachable: fall through and let the request report its own error.
+  }
+  if (status && !status.authenticated) {
+    throw new Error('Authentication required.');
+  }
+
   const response = await fetch(`${apiBackendOrigin}${path}`, {
     ...options,
     credentials: 'include',

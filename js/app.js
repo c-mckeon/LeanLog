@@ -43,63 +43,92 @@ function startClock() {
   }, 1000);
 }
 
-// Function to check if the button was clicked in the last three hours
-function checkLastClick() {
-  fetch(`${workoutApiOrigin}/api/clock`, { credentials: 'include' })
-    .then((response) => {
-      if (!response.ok) throw new Error(`Clock request failed with ${response.status}.`);
-      return response.json();
-    })
-    .then(({ startTime: lastStartTime }) => {
-      if (lastStartTime) {
-        const currentTime = Date.now();
-        const timeElapsedSinceStart = currentTime - lastStartTime;
+// The clock lives in localStorage so it works logged out and in demo mode;
+// a server copy is kept best effort for signed-in users.
+const CLOCK_STORAGE_KEY = 'workoutClockStart';
+const CLOCK_MAX_AGE_MS = 3 * 60 * 60 * 1000;
 
-        if (timeElapsedSinceStart < 3 * 60 * 60 * 1000) {
-          // If within 3 hours, restore state
-          startTime = lastStartTime; // Set the start time
-          elapsedTime = timeElapsedSinceStart; // Update elapsed time
-          startClock();
-          pauseDiv.style.display = 'block'; // Show the pause button's parent div
-          resetDiv.style.display = 'block'; // Show the reset button's parent div
-          updateClockDisplay();
-        }
-      }
-    })
-    .catch((error) => {
-      console.error('Error retrieving clock state:', error);
-    });
-
-
+function readStoredClockStart() {
+  try {
+    const value = Number(localStorage.getItem(CLOCK_STORAGE_KEY));
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch (error) {
+    return null;
+  }
 }
 
+function writeStoredClockStart(value) {
+  try {
+    if (value) localStorage.setItem(CLOCK_STORAGE_KEY, String(value));
+    else localStorage.removeItem(CLOCK_STORAGE_KEY);
+  } catch (error) {
+    // Storage unavailable (private mode); the clock still runs for this page.
+  }
+}
 
+async function isServerClockAvailable() {
+  try {
+    const status = await window.getAuthStatus();
+    return Boolean(status && status.authenticated);
+  } catch (error) {
+    return false;
+  }
+}
 
+function showClockControls() {
+  pauseDiv.style.display = 'block';
+  resetDiv.style.display = 'block';
+}
+
+// Start the clock now and remember the start time locally and on the server
+function beginClock() {
+  if (startTime) return;
+  startTime = Date.now();
+  elapsedTime = 0;
+  paused = false;
+  writeStoredClockStart(startTime);
+  const savedStart = startTime;
+  isServerClockAvailable().then((available) => {
+    if (available) return postToWorkoutApi('/api/clock/start', { startTime: savedStart });
+  }).catch(() => {
+    // Read-only demo sessions reject writes; the local clock is enough.
+  });
+  startClock();
+  showClockControls();
+  updateClockDisplay();
+}
+
+// Restore a clock started within the last three hours
+async function checkLastClick() {
+  let storedStart = readStoredClockStart();
+
+  if (!storedStart && await isServerClockAvailable()) {
+    try {
+      const response = await fetch(`${workoutApiOrigin}/api/clock`, { credentials: 'include' });
+      if (response.ok) storedStart = (await response.json()).startTime || null;
+    } catch (error) {
+      console.error('Error retrieving clock state:', error);
+    }
+  }
+
+  if (!storedStart || startTime) return;
+
+  const timeElapsedSinceStart = Date.now() - storedStart;
+  if (timeElapsedSinceStart >= CLOCK_MAX_AGE_MS) {
+    writeStoredClockStart(null);
+    return;
+  }
+
+  startTime = storedStart;
+  elapsedTime = timeElapsedSinceStart;
+  writeStoredClockStart(storedStart);
+  startClock();
+  showClockControls();
+  updateClockDisplay();
+}
 
 // Listen for the validate button click
-validateBtn.addEventListener('click', () => {
-  if (!startTime) {
-    // If the clock is not already running, initialize it
-    startTime = Date.now();
-    elapsedTime = 0;
-
-    postToWorkoutApi('/api/clock/start', { startTime })
-      .then(() => {
-        startClock();
-
-        // Show the pause and reset buttons' parent divs
-        pauseDiv.style.display = 'block';
-        resetDiv.style.display = 'block';
-
-
-      })
-      .catch((error) => {
-        startTime = null;
-        console.error('Error starting clock:', error);
-      });
-  }
-});
-
+validateBtn.addEventListener('click', beginClock);
 // Listen for the pause button click
 pauseBtn.addEventListener('click', () => {
   if (paused) {
@@ -133,13 +162,16 @@ resetBtn.addEventListener('click', () => {
   pauseDiv.style.display = 'none';
   resetDiv.style.display = 'none';
 
-  // Clear the start time from the database
-  fetch(`${workoutApiOrigin}/api/clock`, {
-    method: 'DELETE',
-    credentials: 'include'
-  }).catch((error) => {
-      console.error('Error clearing clock state:', error);
+  writeStoredClockStart(null);
+  isServerClockAvailable().then((available) => {
+    if (!available) return;
+    return fetch(`${workoutApiOrigin}/api/clock`, {
+      method: 'DELETE',
+      credentials: 'include'
     });
+  }).catch((error) => {
+    console.error('Error clearing clock state:', error);
+  });
 });
 
 // On page load, check if the button was clicked in the last 3 hours
@@ -147,6 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Hide pause and reset buttons by default
   pauseDiv.style.display = 'none';
   resetDiv.style.display = 'none';
+  checkLastClick();
   setupWorkoutYearSelector();
 });
 
@@ -548,12 +581,12 @@ function renderExerciseCategoryOptions() {
 
   const addOption = document.createElement('option');
   addOption.value = 'addNewCategory';
-  addOption.textContent = '➕ Add New Category';
+  addOption.textContent = 'Add new category';
   exerciseCategory.appendChild(addOption);
 
   const removeOption = document.createElement('option');
   removeOption.value = 'removeCategory';
-  removeOption.textContent = '➖ Remove Category';
+  removeOption.textContent = 'Remove category';
   exerciseCategory.appendChild(removeOption);
 
   if (!exerciseCategories.includes(exerciseCategory.value)) {
@@ -678,17 +711,26 @@ function setupWorkoutYearSelector() {
   const yearSelect = document.getElementById('workout-year-filter');
   if (!yearSelect) return;
 
+  // Same year range as the calendar selector, plus an "All years" option
   const currentYear = new Date().getFullYear();
-  const years = ['all', currentYear, currentYear - 1, currentYear - 2];
-  yearSelect.innerHTML = '';
-
-  years.forEach((year, idx) => {
+  yearSelect.innerHTML = '<option value="all">All years</option>';
+  for (let year = currentYear - 5; year <= currentYear + 5; year++) {
     const option = document.createElement('option');
-    option.value = year === 'all' ? 'all' : year.toString();
-    option.textContent = year === 'all' ? 'All years' : year.toString();
-    if (year === currentYear) option.selected = true;
+    option.value = String(year);
+    option.textContent = String(year);
     yearSelect.appendChild(option);
-  });
+  }
+  yearSelect.value = String(currentYear);
+  setupWorkoutMonthSelector();
+}
+
+function setupWorkoutMonthSelector() {
+  const monthSelect = document.getElementById('workout-month-filter');
+  if (!monthSelect) return;
+
+  monthSelect.innerHTML = '<option value="">Select Month</option>' +
+    MONTH_NAMES.map((name, index) => `<option value="${String(index + 1).padStart(2, '0')}">${name}</option>`).join('');
+  monthSelect.value = '';
 }
 
 
@@ -736,6 +778,7 @@ saveNewExerciseBtn.addEventListener('click', async () => {
       });
       newExerciseName.value = '';
       await loadExercises();
+      if (window.refreshTrackedExercises) window.refreshTrackedExercises();
       alert('Exercise added successfully!');
     } catch (error) {
       alert(error.message);
@@ -778,22 +821,7 @@ addExerciseBtn.addEventListener('click', () => {
 
     renderExerciseList();
     saveWorkoutDraft();
-    if (!startTime) {
-      startTime = Date.now();
-      elapsedTime = 0;
-      database
-        .ref('access_logs/start_time')
-        .set(startTime)
-        .then(() => {
-          startClock();
-          pauseDiv.style.display = 'block';
-          resetDiv.style.display = 'block';
-          updateClockDisplay();
-        })
-        .catch((error) => {
-          console.error('Error updating start_time:', error);
-        });
-    }
+    beginClock();
 });
 
 let dropdownContent = []; // Global variable to store the generated dropdown content
@@ -1001,7 +1029,7 @@ exerciseGroupingModeButtons.forEach((button) => {
 
 ////////// Here is functionality for viewing and editing past workout fields
 
-// 📌 Look inside "/workouts/"
+// Look inside "/workouts/"
 var basePath = "/workouts/";
 var workoutKeys = [];
 var workoutsById = {};
@@ -1014,7 +1042,8 @@ async function loadWorkouts() {
     if (!response.ok) throw new Error(`Could not load workouts (${response.status}).`);
     const result = await response.json();
     workoutsById = result.workouts || {};
-    workoutKeys = Object.keys(workoutsById);
+    workoutKeys = Object.keys(workoutsById).sort((a, b) =>
+      String(workoutsById[b]?.date || '').localeCompare(String(workoutsById[a]?.date || '')) || a.localeCompare(b));
 
     if (workoutKeys.length > 0) {
       console.log("Workout Keys:", workoutKeys);
@@ -1022,6 +1051,7 @@ async function loadWorkouts() {
       displayCurrentNode();
     } else {
       document.getElementById("fields").innerHTML = "<p>No workouts found.</p>";
+      renderWorkoutNav();
     }
   } catch (error) {
     console.error("Error fetching workouts:", error);
@@ -1029,140 +1059,155 @@ async function loadWorkouts() {
 }
 
 // Display current workout node
+function buildPastSetRowHtml(exerciseIndex, setIndex, set) {
+  set = set || {};
+  return `
+    <div class="set-row we-set" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}">
+      <span class="we-set-number">${setIndex + 1}</span>
+      <input type="number" id="set_reps_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.reps || '')}" placeholder="Reps" aria-label="Reps">
+      <input type="number" id="set_weight_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.weight || '')}" placeholder="Weight" aria-label="Weight">
+      <input type="text" id="set_note_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.note || '')}" placeholder="Note" aria-label="Set note" class="we-set-note">
+      <button type="button" class="exo-btn exo-btn-sm exo-btn-danger remove-set-editor-btn" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}">Remove</button>
+    </div>`;
+}
+
+function buildPastExerciseHtml(exercise, index) {
+  const setsList = Array.isArray(exercise.setsList) ? exercise.setsList : [];
+  const legacyField = (id, label, value) => `
+    <label class="we-legacy-field">${label}
+      <input type="number" id="${id}_${index}" value="${escapeExerciseHtml(value)}" placeholder="${label}">
+    </label>`;
+  const setsHtml = setsList.length > 0
+    ? setsList.map((set, setIndex) => buildPastSetRowHtml(index, setIndex, set)).join('')
+    : `<div class="legacy-row we-legacy">
+        ${legacyField('legacy_sets', 'Sets', exercise.sets || '')}
+        ${legacyField('legacy_reps', 'Reps', exercise.reps || '')}
+        ${legacyField('legacy_weight', 'Weight', exercise.weight || '')}
+      </div>`;
+
+  return `
+    <div class="exercise-entry we-exercise" data-index="${index}">
+      <div class="we-exercise-main">
+        <label class="we-field">Name
+          <input type="text" id="name_${index}" value="${escapeExerciseHtml(exercise.name || '')}">
+        </label>
+        <label class="we-field">Note
+          <input type="text" id="note_${index}" value="${escapeExerciseHtml(exercise.note || '')}">
+        </label>
+        <button type="button" class="exo-btn exo-btn-sm exo-btn-danger" onclick="deleteExercise(${index})">Delete exercise</button>
+      </div>
+      <div class="we-exercise-sets">
+        <div class="we-sets-header">
+          <strong>Sets</strong>
+          <button type="button" class="exo-btn exo-btn-sm add-editor-set-btn" data-index="${index}">Add set</button>
+        </div>
+        <div id="setsWrapper_${index}">${setsHtml}</div>
+      </div>
+    </div>`;
+}
+
 function displayCurrentNode() {
-    if (workoutKeys.length === 0) return;
+  if (workoutKeys.length === 0) return;
 
-    var workoutID = workoutKeys[currentIndex];
-    var data = workoutsById[workoutID];
-    console.log("Displaying workout:", workoutID); // DEBUG LOG
-        var fieldsHTML = "";
+  var workoutID = workoutKeys[currentIndex];
+  var data = workoutsById[workoutID];
+  var fieldsHTML = "";
 
-        // 📌 Workout-Level Fields (Dynamically show all fields except "exercises")
-        if (data) {
-          fieldsHTML += `<h3>Workout Info</h3>`;
-          // Define the workout fields with custom labels
-          const workoutFields = {
-              date: "Date",
-              duration: "Duration",
-              intensity: "Intensity",
-              intensityNote: "Note",
-              result: "Result" 
-          };
-      
-          for (const key in workoutFields) {
-              fieldsHTML += `
-                  <label style="display:inline-block; width:65px">${workoutFields[key]}: </label>
-                  <input type="text" style=" width:350px" id="workout_${key}" value="${data[key] || ''}"><br>
-              `;
-          }
-      }
-      
+  if (data) {
+    const workoutFields = {
+      date: "Date",
+      duration: "Duration",
+      intensity: "Intensity",
+      intensityNote: "Note",
+      result: "Result"
+    };
 
-        // 📌 Exercise-Level Fields
-        if (data && data.exercises) {
-            fieldsHTML += `<br><h3>Exercises</h3>`;
-            data.exercises.forEach((exercise, index) => {
-                const setsList = Array.isArray(exercise.setsList) ? exercise.setsList : [];
-                const preserveLegacy = !setsList.length;
-                const legacySets = exercise.sets || '';
-                const legacyReps = exercise.reps || '';
-                const legacyWeight = exercise.weight || '';
+    fieldsHTML += `<h3 class="we-heading">Workout info</h3><div class="we-info">`;
+    for (const key in workoutFields) {
+      fieldsHTML += `
+        <label class="we-field">${workoutFields[key]}
+          <input type="text" id="workout_${key}" value="${escapeExerciseHtml(data[key] || '')}">
+        </label>`;
+    }
+    fieldsHTML += `</div>`;
+  }
 
-                fieldsHTML += `
-                    <div class="exercise-entry" data-index="${index}" style="margin-bottom: 16px; padding: 12px; border: 1px solid #ccc; border-radius: 6px;">
-                      <div style="display:flex; flex-wrap:wrap; gap: 0.75rem; align-items:flex-start;">
-                        <div style="min-width: 200px; flex: 1 1 220px;">
-                          <label style="display:block; font-weight:600; margin-bottom: 4px;">Name</label>
-                          <input type="text" id="name_${index}" value="${exercise.name || ''}" style="width:100%; margin-bottom: 8px;">
-                          <label style="display:block; font-weight:600; margin-bottom: 4px;">Note</label>
-                          <input type="text" id="note_${index}" value="${exercise.note || ''}" style="width:100%; margin-bottom: 8px;">
-                          <button type="button" class="btn btn-danger btn-sm" onclick="deleteExercise(${index})">Delete exercise</button>
-                        </div>
-                        <div style="flex: 2 1 400px;">
-                          <div style="display:flex; align-items:center; gap: 0.75rem; margin-bottom: 8px;">
-                            <strong>Sets</strong>
-                            <button type="button" class="btn btn-sm btn-outline-secondary add-editor-set-btn" data-index="${index}">+ Add set</button>
-                          </div>
-                          <div id="setsWrapper_${index}">
-                            ${setsList.length > 0 ? setsList.map((set, setIndex) => `
-                              <div class="set-row" data-exercise-index="${index}" data-set-index="${setIndex}" style="display:flex; gap: 0.5rem; align-items:center; margin-bottom: 6px; flex-wrap:wrap;">
-                                <span style="min-width: 24px;">#${setIndex + 1}</span>
-                                <input type="number" id="set_reps_${index}_${setIndex}" value="${set.reps || ''}" placeholder="Reps" style="width:80px;">
-                                <input type="number" id="set_weight_${index}_${setIndex}" value="${set.weight || ''}" placeholder="Weight" style="width:80px;">
-                                <input type="text" id="set_note_${index}_${setIndex}" value="${set.note || ''}" placeholder="Note" style="width:160px;">
-                                <button type="button" class="btn btn-sm btn-outline-danger remove-set-editor-btn" data-exercise-index="${index}" data-set-index="${setIndex}">Remove</button>
-                              </div>
-                            `).join('') : `
-                              <div class="legacy-row" style="display:flex; gap: 0.5rem; align-items:center; flex-wrap:wrap; margin-bottom: 6px;">
-                                <label style="min-width: 45px;">Sets</label>
-                                <input type="number" id="legacy_sets_${index}" value="${legacySets}" placeholder="Sets" style="width:80px;">
-                                <label style="min-width: 45px;">Reps</label>
-                                <input type="number" id="legacy_reps_${index}" value="${legacyReps}" placeholder="Reps" style="width:80px;">
-                                <label style="min-width: 55px;">Weight</label>
-                                <input type="number" id="legacy_weight_${index}" value="${legacyWeight}" placeholder="Weight" style="width:80px;">
-                              </div>
-                            `}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                `;
-            });
-        }
+  if (data && data.exercises) {
+    fieldsHTML += `<h3 class="we-heading">Exercises</h3><div class="we-exercises">`;
+    data.exercises.forEach((exercise, index) => {
+      fieldsHTML += buildPastExerciseHtml(exercise, index);
+    });
+    fieldsHTML += `</div>`;
+  }
 
-        document.getElementById("fields").innerHTML = fieldsHTML || "<p>No exercises found.</p>";
+  document.getElementById("fields").innerHTML = fieldsHTML || "<p>No exercises found.</p>";
+  renderWorkoutNav();
 }
 
-// ➡️ Move to next workout
-function nextNode() {
-    if (workoutKeys.length > 0) {
-        currentIndex = (currentIndex + 1) % workoutKeys.length;
-        console.log("Next node index:", currentIndex, "Key:", workoutKeys[currentIndex]); // DEBUG LOG
-        displayCurrentNode();
-    }
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function getWorkoutDateParts(key) {
+  const [year = "", month = "", day = ""] = String(workoutsById[key]?.date || "").split("-");
+  return { year, month, day };
 }
 
-// ⬅️ Move to previous workout
-function prevNode() {
-    if (workoutKeys.length > 0) {
-        currentIndex = (currentIndex - 1 + workoutKeys.length) % workoutKeys.length;
-        displayCurrentNode();
-    }
+function fillSelect(select, options, selected) {
+  select.innerHTML = options.map(({ value, label }) =>
+    `<option value="${escapeExerciseHtml(value)}"${value === selected ? " selected" : ""}>${escapeExerciseHtml(label)}</option>`).join("");
+}
+
+// Rebuild the year / month / day dropdowns so they reflect the current workout.
+function renderWorkoutNav() {
+  const yearSelect = document.getElementById("workoutYearNav");
+  const monthSelect = document.getElementById("workoutMonthNav");
+  const daySelect = document.getElementById("workoutDayNav");
+  if (!yearSelect || !monthSelect || !daySelect) return;
+
+  const hasWorkouts = workoutKeys.length > 0;
+  [yearSelect, monthSelect, daySelect].forEach((select) => { select.disabled = !hasWorkouts; });
+  if (!hasWorkouts) {
+    [yearSelect, monthSelect, daySelect].forEach((select) => { select.innerHTML = ""; });
+    return;
+  }
+
+  const current = getWorkoutDateParts(workoutKeys[currentIndex]);
+  const unique = (values) => Array.from(new Set(values));
+  const sameYear = workoutKeys.filter((key) => getWorkoutDateParts(key).year === current.year);
+  const sameMonth = sameYear.filter((key) => getWorkoutDateParts(key).month === current.month);
+
+  fillSelect(yearSelect, unique(workoutKeys.map((key) => getWorkoutDateParts(key).year))
+    .map((year) => ({ value: year, label: year || "No date" })), current.year);
+  fillSelect(monthSelect, unique(sameYear.map((key) => getWorkoutDateParts(key).month))
+    .map((month) => ({ value: month, label: MONTH_NAMES[Number(month) - 1] || month || "No date" })), current.month);
+  fillSelect(daySelect, sameMonth.map((key) => {
+    const day = getWorkoutDateParts(key).day;
+    const duplicates = sameMonth.filter((other) => getWorkoutDateParts(other).day === day);
+    const label = duplicates.length > 1 ? `${day || "No date"} (${duplicates.indexOf(key) + 1})` : (day || "No date");
+    return { value: key, label };
+  }), workoutKeys[currentIndex]);
+}
+
+// Jump to the most recent workout matching the chosen year (and month when given).
+function selectWorkoutByDate(year, month) {
+  const matches = workoutKeys.filter((key) => {
+    const parts = getWorkoutDateParts(key);
+    return parts.year === year && (month === undefined || parts.month === month);
+  });
+  if (!matches.length) return;
+  currentIndex = workoutKeys.indexOf(matches[0]);
+  displayCurrentNode();
 }
 
 function addpastexercise() {
   var index = document.querySelectorAll('#fields .exercise-entry').length;
-  var newExerciseHTML = `
-      <div class="exercise-entry" data-index="${index}" style="margin-bottom: 16px; padding: 12px; border: 1px solid #ccc; border-radius: 6px;">
-          <div style="display:flex; flex-wrap:wrap; gap: 0.75rem; align-items:flex-start;">
-            <div style="min-width: 200px; flex: 1 1 220px;">
-              <label style="display:block; font-weight:600; margin-bottom: 4px;">Name</label>
-              <input type="text" id="name_${index}" value="" style="width:100%; margin-bottom: 8px;">
-              <label style="display:block; font-weight:600; margin-bottom: 4px;">Note</label>
-              <input type="text" id="note_${index}" value="" style="width:100%; margin-bottom: 8px;">
-              <button type="button" class="btn btn-danger btn-sm" onclick="deleteExercise(${index})">Delete exercise</button>
-            </div>
-            <div style="flex: 2 1 400px;">
-              <div style="display:flex; align-items:center; gap: 0.75rem; margin-bottom: 8px;">
-                <strong>Sets</strong>
-                <button type="button" class="btn btn-sm btn-outline-secondary add-editor-set-btn" data-index="${index}">+ Add set</button>
-              </div>
-              <div id="setsWrapper_${index}">
-                <div class="set-row" data-exercise-index="${index}" data-set-index="0" style="display:flex; gap: 0.5rem; align-items:center; margin-bottom: 6px; flex-wrap:wrap;">
-                  <span style="min-width: 24px;">#1</span>
-                  <input type="number" id="set_reps_${index}_0" value="" placeholder="Reps" style="width:80px;">
-                  <input type="number" id="set_weight_${index}_0" value="" placeholder="Weight" style="width:80px;">
-                  <input type="text" id="set_note_${index}_0" value="" placeholder="Note" style="width:160px;">
-                  <button type="button" class="btn btn-sm btn-outline-danger remove-set-editor-btn" data-exercise-index="${index}" data-set-index="0">Remove</button>
-                </div>
-              </div>
-            </div>
-          </div>
-      </div>
-  `;
-  document.getElementById("fields").insertAdjacentHTML("beforeend", newExerciseHTML);
+  var container = document.getElementById("fields");
+  var list = container.querySelector('.we-exercises');
+  if (!list) {
+    container.insertAdjacentHTML('beforeend', '<h3 class="we-heading">Exercises</h3><div class="we-exercises"></div>');
+    list = container.querySelector('.we-exercises');
+  }
+  list.insertAdjacentHTML("beforeend", buildPastExerciseHtml({ name: '', note: '', setsList: [{}] }, index));
 }
-
 
 
 //  Save changes (Workout + Exercises)
@@ -1231,6 +1276,10 @@ function saveChanges() {
     requestWorkoutApi(`/api/workouts/${encodeURIComponent(workoutID)}`, 'PUT', updatedWorkout)
       .then((result) => {
         workoutsById[workoutID] = result.workout;
+        workoutKeys.sort((a, b) =>
+          String(workoutsById[b]?.date || '').localeCompare(String(workoutsById[a]?.date || '')) || a.localeCompare(b));
+        currentIndex = Math.max(workoutKeys.indexOf(workoutID), 0);
+        renderWorkoutNav();
         alert("Changes saved!");
       })
       .catch(error => alert("Error: " + error.message));
@@ -1284,6 +1333,7 @@ function deleteworkout() {
       } else {
         document.getElementById("editForm").innerHTML = "";
         document.getElementById("fields").innerHTML = "<p>No workouts found.</p>";
+        renderWorkoutNav();
       }
     })
     .catch(error => {
@@ -1292,15 +1342,22 @@ function deleteworkout() {
 }
 
 function initWorkoutEditorControls() {
-  const workoutPrevBtn = document.getElementById("workoutPrevBtn");
-  const workoutNextBtn = document.getElementById("workoutNextBtn");
   const saveChangesBtn = document.getElementById("saveChangesBtn");
   const deleteWorkoutBtn = document.getElementById("deleteWorkoutBtn");
   const addPastExerciseBtn = document.getElementById("addPastExerciseBtn");
   const fieldsContainer = document.getElementById("fields");
 
-  if (workoutPrevBtn) workoutPrevBtn.addEventListener("click", prevNode);
-  if (workoutNextBtn) workoutNextBtn.addEventListener("click", nextNode);
+  const yearNav = document.getElementById("workoutYearNav");
+  const monthNav = document.getElementById("workoutMonthNav");
+  const dayNav = document.getElementById("workoutDayNav");
+  if (yearNav) yearNav.addEventListener("change", () => selectWorkoutByDate(yearNav.value));
+  if (monthNav) monthNav.addEventListener("change", () => selectWorkoutByDate(yearNav.value, monthNav.value));
+  if (dayNav) dayNav.addEventListener("change", () => {
+    const index = workoutKeys.indexOf(dayNav.value);
+    if (index === -1) return;
+    currentIndex = index;
+    displayCurrentNode();
+  });
   if (saveChangesBtn) saveChangesBtn.addEventListener("click", saveChanges);
   if (deleteWorkoutBtn) deleteWorkoutBtn.addEventListener("click", deleteworkout);
   if (addPastExerciseBtn) addPastExerciseBtn.addEventListener("click", addpastexercise);
@@ -1315,16 +1372,7 @@ function initWorkoutEditorControls() {
         const setsWrapper = document.getElementById(`setsWrapper_${exerciseIndex}`);
         if (!setsWrapper) return;
         const nextSetIndex = setsWrapper.querySelectorAll('.set-row').length;
-        const newSetHTML = `
-          <div class="set-row" data-exercise-index="${exerciseIndex}" data-set-index="${nextSetIndex}" style="display:flex; gap: 0.5rem; align-items:center; margin-bottom: 6px; flex-wrap:wrap;">
-            <span style="min-width: 24px;">#${nextSetIndex + 1}</span>
-            <input type="number" id="set_reps_${exerciseIndex}_${nextSetIndex}" value="" placeholder="Reps" style="width:80px;">
-            <input type="number" id="set_weight_${exerciseIndex}_${nextSetIndex}" value="" placeholder="Weight" style="width:80px;">
-            <input type="text" id="set_note_${exerciseIndex}_${nextSetIndex}" value="" placeholder="Note" style="width:160px;">
-            <button type="button" class="btn btn-sm btn-outline-danger remove-set-editor-btn" data-exercise-index="${exerciseIndex}" data-set-index="${nextSetIndex}">Remove</button>
-          </div>
-        `;
-        setsWrapper.insertAdjacentHTML('beforeend', newSetHTML);
+        setsWrapper.insertAdjacentHTML('beforeend', buildPastSetRowHtml(Number(exerciseIndex), nextSetIndex));
         return;
       }
 
@@ -1600,7 +1648,7 @@ function buildVolumeRowHtml(mapping) {
         ${groups.map((group) => `<option value="${escapeExerciseHtml(group)}" ${group === mapping.muscleGroup ? 'selected' : ''}>${escapeExerciseHtml(group)}</option>`).join('')}
       </select></td>
       <td><input type="number" class="volume-weight-input form-control form-control-sm" aria-label="Contribution" min="0" max="1" step="0.05" value="${mapping.weight}" style="width:90px;"></td>
-      <td><button type="button" class="btn btn-sm btn-outline-danger volume-delete-btn" aria-label="Delete muscle group">✕</button></td>
+      <td><button type="button" class="btn btn-sm btn-outline-danger volume-delete-btn" aria-label="Delete muscle group">Remove</button></td>
     </tr>`;
 }
 
@@ -1619,7 +1667,7 @@ function renderVolumeTracking() {
   section.innerHTML = `
     <div class="exo-card-header">
       <h3>Target Groups <small>(Volume Tracking)</small></h3>
-      <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">⊕ Add Muscle Group</button>
+      <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
     </div>
     <p class="exo-hint">${scope}</p>
     <table class="exo-volume-table">
@@ -1786,6 +1834,15 @@ function alignExerciseColumns() {
 // Render the exercise list dynamically, including intensity note field
 function renderExerciseList() {
   exerciseList.innerHTML = ''; // Clear the list
+
+  if (selectedExercises.length === 0) {
+    const emptyRow = document.createElement('div');
+    emptyRow.className = 'exercise-item exercise-empty';
+    emptyRow.textContent = 'Add an exercise to get started';
+    exerciseList.appendChild(emptyRow);
+    updateVolumeSummary();
+    return;
+  }
 
   selectedExercises.forEach((exercise, index) => {
     const exerciseDiv = document.createElement('div');
@@ -2185,7 +2242,7 @@ function updateVolumeSummary() {
 function saveWorkoutDraft() {
   const draft = {
     exercises: selectedExercises,
-    intensity: document.getElementById('workoutIntensity')?.value || '', // Save intensity
+    intensity: document.getElementById('workoutIntensity')?.value ?? (currentWorkout.intensity || ''), // Save intensity
     intensityNote: currentWorkout.intensityNote || '', // Save intensity note
     date: getToday()
   };
@@ -2300,12 +2357,14 @@ function renderSavedWorkouts() {
 
     const workoutYearElement = document.getElementById('workout-year-filter');
     const selectedWorkoutYear = workoutYearElement ? workoutYearElement.value : 'all';
+    const selectedWorkoutMonth = document.getElementById('workout-month-filter')?.value || '';
 
     const entries = Object.entries(workouts)
       .filter(([, workout]) => {
         if (!workout) return false;
-        if (selectedWorkoutYear && selectedWorkoutYear !== 'all' && workout.date) {
-          return workout.date.startsWith(selectedWorkoutYear);
+        if (selectedWorkoutYear && selectedWorkoutYear !== 'all') {
+          const prefix = selectedWorkoutMonth ? `${selectedWorkoutYear}-${selectedWorkoutMonth}` : selectedWorkoutYear;
+          return Boolean(workout.date) && workout.date.startsWith(prefix);
         }
         return true;
       })
@@ -2365,25 +2424,42 @@ function renderSavedWorkouts() {
 }
 
 const workoutYearSelect = document.getElementById('workout-year-filter');
+const workoutMonthSelect = document.getElementById('workout-month-filter');
+
+// Months only apply to a single year
+function syncWorkoutMonthState() {
+  if (!workoutMonthSelect || !workoutYearSelect) return;
+  const allYears = workoutYearSelect.value === 'all';
+  workoutMonthSelect.disabled = allYears;
+  if (allYears) workoutMonthSelect.value = '';
+}
+
 if (workoutYearSelect) {
   workoutYearSelect.addEventListener('change', () => {
+    syncWorkoutMonthState();
     renderSavedWorkouts();
   });
+}
+if (workoutMonthSelect) {
+  workoutMonthSelect.addEventListener('change', renderSavedWorkouts);
 }
 
 // Toggle workouts (and the filter) when the "Show workouts" button is clicked
 workoutButton.addEventListener('click', () => {
   const workoutYearElement = document.getElementById('workout-year-filter');
+  const workoutMonthElement = document.getElementById('workout-month-filter');
   if (workoutButton.textContent === 'Show workouts') {
     renderSavedWorkouts(); // Populate the workouts
     savedWorkoutList.classList.remove('hidden'); // Make the workouts list visible
     workoutButton.textContent = 'Hide workouts'; // Change button text
     if (workoutYearElement) workoutYearElement.style.display = 'inline';
+    if (workoutMonthElement) workoutMonthElement.style.display = 'inline';
   } else {
     savedWorkoutList.innerHTML = ''; // Clear the workouts content
     savedWorkoutList.classList.add('hidden'); // Hide the workouts list
     workoutButton.textContent = 'Show workouts'; // Change button text back
     if (workoutYearElement) workoutYearElement.style.display = 'none';
+    if (workoutMonthElement) workoutMonthElement.style.display = 'none';
   }
 });
 
@@ -2485,6 +2561,7 @@ function resetPrivateUi() {
   if (resultSection) resultSection.classList.add('hidden');
 
   selectedExercises.length = 0;
+  renderExerciseList();
   currentWorkout.intensity = '';
   currentWorkout.intensityNote = '';
   startTime = null;
@@ -2527,7 +2604,6 @@ async function bootstrapPrivateApp() {
     await loadWorkoutDraft();
     renderSavedWorkouts();
     checkLastWorkoutResult();
-    checkLastClick();
     emitPrivateBootstrapState('ready');
   } catch (error) {
     console.error('Private app bootstrap failed:', error);
@@ -2535,6 +2611,7 @@ async function bootstrapPrivateApp() {
   }
 }
 
+renderExerciseList();
 bootstrapPrivateApp();
 
 

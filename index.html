@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-DK3jlU8s.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-CFrdSFCH.css">
 </head>
 <body>
   
@@ -78,6 +78,8 @@
           <input type="checkbox" id="includeProgressSetting" data-section-setting="progress" checked>
           <span>Include section</span>
         </label>
+        <button type="button" id="trackedExercisesToggleBtn" class="settings-link-btn" aria-expanded="false" aria-controls="trackedExercisesPanel">Select exercises to track</button>
+        <div id="trackedExercisesPanel" class="tracked-exercises-panel hidden"></div>
       </div>
 
       <div class="settings-section-block">
@@ -168,10 +170,10 @@
   
     <div class="col-sm-10">
       <div id="resultsection" class="hidden">
-        <div class="row align-items-center"> <!-- 👈 This aligns input + button vertically centered -->
+        <div class="row align-items-center"> <!-- This aligns input + button vertically centered -->
           <div class="col-auto">
             <input type="text" id="lastworkoutresult" class="form-control" placeholder="Add how you felt after your workout on [date]" 
-            style="min-width: 450px; background-color: #fff8cc; max-height: 29.2px;">
+            style="background-color: #fff8cc;">
           </div>
           <div class="col-auto">
             <button type="button" id="savelastworkoutbtn" class="btn" aria-label="Save how you felt">+</button>
@@ -193,7 +195,7 @@
           <span id="addEditToolbarButtons" class="exo-toolbar-group hidden">
             <button type="button" id="showeditorbtn" class="exo-btn">Workout Editor</button>
             <button type="button" id="showexoeditorbtn" class="exo-btn">Exercise Editor</button>
-            <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn exo-btn-primary">＋ Add Exercise</button>
+            <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn exo-btn-primary">Add Exercise</button>
           </span>
           <span class="exo-toolbar-spacer"></span>
           <span id="exerciseActionButtons" class="exo-toolbar-group hidden">
@@ -204,7 +206,6 @@
         <section id="addExerciseSection" style="margin-top: 10px;">
           <div id="addExerciseFormWrapper" class="hidden exo-card" style="margin-top: 10px;">
             <div class="exo-add-header">
-              <span class="exo-add-icon" aria-hidden="true">＋</span>
               <div>
                 <h3>Add Exercise</h3>
                 <p class="exo-hint">Create a new exercise and add it to your library.</p>
@@ -238,8 +239,8 @@
                   </div>
                 </div>
 
-                <button type="button" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">＋ Add Exercise</button>
-                <button type="button" id="hideAddExerciseFormBtn" class="exo-btn">˄ Hide Add Exercise Form</button>
+                <button type="button" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">Add Exercise</button>
+                <button type="button" id="hideAddExerciseFormBtn" class="exo-btn">Hide form</button>
             </form>
           </div>
         </section> 
@@ -247,14 +248,18 @@
     <!-- Editor Section (Appears Below) -->
 
         <div id="workouteditor" >
-            <div id="editorsection" style="margin-top: 10px;" class="hidden">
-                <button type="button" id="workoutPrevBtn" class="exo-btn" aria-label="Previous workout">&larr;</button>
-                <button type="button" id="workoutNextBtn" class="exo-btn" aria-label="Next workout">&rarr;</button>
-                <button type="button" id="addPastExerciseBtn" class="exo-btn">Add exercise</button>
-                <button type="button" id="saveChangesBtn" class="exo-btn">Save changes</button>
-                <button type="button" id="deleteWorkoutBtn" class="exo-btn">Delete workout</button>
+            <div id="editorsection" class="hidden">
+                <div class="we-toolbar">
+                  <select id="workoutYearNav" class="we-nav" aria-label="Year"></select>
+                  <select id="workoutMonthNav" class="we-nav" aria-label="Month"></select>
+                  <select id="workoutDayNav" class="we-nav" aria-label="Day"></select>
+                  <button type="button" id="addPastExerciseBtn" class="exo-btn">Add exercise</button>
+                  <span class="exo-toolbar-spacer"></span>
+                  <button type="button" id="saveChangesBtn" class="exo-btn exo-btn-primary">Save changes</button>
+                  <button type="button" id="deleteWorkoutBtn" class="exo-btn exo-btn-danger">Delete workout</button>
+                </div>
                 <form id="editForm"></form>
-                <div style="margin-top: 10px; border-left: 10px solid rgb(255, 213, 0); padding-left: 10px;" id="fields"></div>
+                <div id="fields"></div>
             </div>
         </div>
         <div style="margin-top: 10px;" class="hidden" id="exerciseeditor" >
@@ -338,12 +343,12 @@
 
 
   <section class="row p-3" id="showWorkoutsSection">
-    <div class="col-5" id="showworkouts">
+    <div class="col-12 period-bar" id="showworkouts">
       <button style="min-width: 150px;" class="click">Show workouts</button>
-      <select id="workout-year-filter" style="display: none;">
+      <select id="workout-year-filter" class="period-select" aria-label="Year" style="display: none;">
         <option value="all">All years</option>
       </select>
-      
+      <select id="workout-month-filter" class="period-select" aria-label="Month" style="display: none;"></select>
     </div>
     <!-- Saved Workouts Section -->
     <div class="row p-3 hidden" id="savedWorkoutList">
@@ -366,9 +371,9 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 
   <div class="row p-3" id="calendarSection">
-    <div class="col-2" id="showcal">
+    <div class="col-12 period-bar" id="showcal">
       <button style="min-width: 150px;" class="click">Show calendar</button>
-      <select id="calendar-year-filter" style="display: none;">
+      <select id="calendar-year-filter" class="period-select" aria-label="Year" style="display: none;">
         <option value="2025">2025</option>
         <option value="2026" selected>2026</option>
       </select>
@@ -386,14 +391,14 @@
       <div id="progressarea" class="hidden">
         <section id="Progress section" style="margin-top: 10px;">
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-            <button type="button" id="progressViewE1RM" class="btn btn-sm btn-outline-primary progress-view-btn active" data-view="e1RM">e1RM</button>
-            <button type="button" id="progressViewAvgVolume" class="btn btn-sm btn-outline-primary progress-view-btn" data-view="avg3Volume">Average 3-set volume</button>
+            <button type="button" id="progressViewE1RM" class="btn btn-sm btn-outline-primary progress-view-btn active" data-view="e1RM">Estimated one-rep-max</button>
+            <button type="button" id="progressViewAvgVolume" class="btn btn-sm btn-outline-primary progress-view-btn" data-view="avg3Volume" hidden>Average 3-set volume</button>
             <button type="button" id="progressViewBestEfforts" class="btn btn-sm btn-outline-primary progress-view-btn" data-view="bestEfforts">Best efforts</button>
           </div>
 
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
+          <div id="e1rmControls" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px;">
             <select id="ORMexerciseInput" style="width: 180px;" class="form-control form-control-sm"></select>
-            <input type="number" id="ORMrepsInput" placeholder="Reps (4-6)" class="form-control form-control-sm" style="width:110px;" />
+            <input type="number" id="ORMrepsInput" placeholder="Reps (3-8)" class="form-control form-control-sm" style="width:110px;" />
             <input type="number" id="ORMweightInput" placeholder="Weight (kg)" class="form-control form-control-sm" style="width:110px;" />
             <button type="button" id="recordE1RMBtn" class="btn btn-sm btn-outline-success">Record max effort set</button>
             <select id="ORMexerciseDataFilter" style="width: 180px;" class="form-control form-control-sm">
@@ -543,7 +548,7 @@ body {
           </div>
 
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
-            <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn active" data-view="sofar">So Far</button>
+            <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn active" data-view="sofar" hidden>So Far</button>
             <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="monthly">Monthly</button>
             <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="coverage">Cov. by month</button>
           </div>

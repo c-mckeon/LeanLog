@@ -1,4 +1,4 @@
-﻿const progressToggleButton = document.getElementById('toggleprogressBtn');
+const progressToggleButton = document.getElementById('toggleprogressBtn');
 const progressArea = document.getElementById('progressarea');
 const progressTableHead = document.getElementById('progressTableHead');
 const progressTableBody = document.getElementById('progressTableBody');
@@ -13,6 +13,16 @@ let currentProgressView = 'e1RM';
 let allExercisesMap = {};
 let exerciseIdByLowerName = {};
 let isPerformanceListVisible = false;
+
+// Exercises hidden from progress are stored as false; anything unset counts as tracked.
+const TRACKED_EXERCISES_PATH = 'settings/progress/trackedExercises';
+const MAX_DEFAULT_TRACKED_EXERCISES = 10;
+let trackedExercises = {};
+let trackedSyncChain = Promise.resolve();
+
+function isExerciseTracked(id) {
+  return trackedExercises[id] !== false;
+}
 
 const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -54,8 +64,9 @@ function parseWorkoutDate(record) {
 }
 
 function getExerciseName(exercise) {
-  if (!exercise) return 'Unnamed exercise';
-  return (exercise.name || exercise.exerciseName || exercise.title || exercise.exercise || 'Unnamed exercise').trim();
+  if (!exercise) return '';
+  const name = exercise.name || exercise.exerciseName || exercise.title || exercise.exercise;
+  return typeof name === 'string' ? name.trim() : '';
 }
 
 function computeEstimated1RM(set) {
@@ -177,7 +188,10 @@ function getVisibleExerciseIds(rows) {
 
 function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys) {
   const exerciseIds = Object.keys(allExercisesMap);
-  const allowedExercises = exerciseIds.map(id => ({ id, name: allExercisesMap[id] })).filter(entry => entry.name);
+  const allowedExercises = exerciseIds
+    .filter(isExerciseTracked)
+    .map(id => ({ id, name: allExercisesMap[id] }))
+    .filter(entry => entry.name);
   const rows = buildInitialProgressRows(allowedExercises, monthKeys);
 
   Object.values(e1rmSnapshot || {}).forEach(entry => {
@@ -321,7 +335,7 @@ function populateExerciseDropdowns(exercises, visibleExerciseIds = []) {
   ORMexerciseInput.innerHTML = '<option value="">Select exercise</option>';
   ORMexerciseDataFilter.innerHTML = '<option value="all">All exercises</option>';
 
-  const exerciseIds = visibleExerciseIds.length ? visibleExerciseIds : Object.keys(exercises);
+  const exerciseIds = (visibleExerciseIds.length ? visibleExerciseIds : Object.keys(exercises)).filter(isExerciseTracked);
 
   exerciseIds.forEach(key => {
     const name = exercises[key];
@@ -341,12 +355,103 @@ function populateExerciseDropdowns(exercises, visibleExerciseIds = []) {
 
 function loadExerciseOptions() {
   if (!window.database) return Promise.resolve();
-  return window.database.ref('exercises').once('value').then(snapshot => {
-    const flattened = getFlattenedExerciseList(snapshot.val() || {});
+  // Prefer the catalog the app already loaded, which has resolved exercise names
+  const catalog = typeof exerciseCatalogByCategory !== 'undefined' ? exerciseCatalogByCategory : null;
+  const source = catalog && Object.keys(catalog).length
+    ? Promise.resolve(catalog)
+    : window.database.ref('exercises').once('value').then(snapshot => snapshot.val() || {});
+  return source.then(value => {
+    const flattened = getFlattenedExerciseList(value);
     allExercisesMap = Object.fromEntries(flattened.map(ex => [ex.id, ex.name]));
     exerciseIdByLowerName = Object.fromEntries(flattened.map(ex => [ex.name.toLowerCase(), ex.id]));
   }).catch(error => {
     console.error('Error loading exercises:', error);
+  });
+}
+
+// Load the saved tracking choices and save a default for any exercise that has none yet.
+// Users with no saved choices keep all their existing exercises; after that,
+// new exercises are untracked once more than 10 are already known.
+function syncTrackedExercises() {
+  trackedSyncChain = trackedSyncChain.then(async () => {
+    if (!window.database) return;
+    const snapshot = await window.database.ref(TRACKED_EXERCISES_PATH).once('value');
+    const stored = snapshot.val();
+    trackedExercises = stored && typeof stored === 'object' ? { ...stored } : {};
+
+    const exerciseIds = Object.keys(allExercisesMap);
+    const hadSavedChoices = exerciseIds.some(id => id in trackedExercises);
+    let known = exerciseIds.filter(id => id in trackedExercises).length;
+    const updates = {};
+
+    exerciseIds.forEach(id => {
+      if (id in trackedExercises) return;
+      const tracked = hadSavedChoices ? known <= MAX_DEFAULT_TRACKED_EXERCISES : true;
+      trackedExercises[id] = tracked;
+      updates[id] = tracked;
+      known += 1;
+    });
+
+    if (Object.keys(updates).length) {
+      await window.database.ref(TRACKED_EXERCISES_PATH).update(updates);
+    }
+  }).catch(error => {
+    console.error('Error syncing tracked exercises:', error);
+  });
+  return trackedSyncChain;
+}
+window.refreshTrackedExercises = () => loadExerciseOptions().then(syncTrackedExercises);
+
+const trackedExercisesToggleBtn = document.getElementById('trackedExercisesToggleBtn');
+const trackedExercisesPanel = document.getElementById('trackedExercisesPanel');
+
+function renderTrackedExercisesPanel() {
+  if (!trackedExercisesPanel) return;
+  const entries = Object.entries(allExercisesMap)
+    .sort((a, b) => a[1].localeCompare(b[1]));
+
+  if (!entries.length) {
+    trackedExercisesPanel.innerHTML = '<div class="settings-empty">No saved exercises yet.</div>';
+    return;
+  }
+
+  trackedExercisesPanel.innerHTML = '';
+  entries.forEach(([id, name]) => {
+    const label = document.createElement('label');
+    label.className = 'settings-checkbox-row';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = isExerciseTracked(id);
+    checkbox.addEventListener('change', async () => {
+      const tracked = checkbox.checked;
+      trackedExercises[id] = tracked;
+      try {
+        await window.database.ref(TRACKED_EXERCISES_PATH).update({ [id]: tracked });
+        loadProgressData();
+        if (isPerformanceListVisible) loadPerformanceList();
+      } catch (error) {
+        trackedExercises[id] = !tracked;
+        checkbox.checked = !tracked;
+        console.error('Error saving tracked exercise:', error);
+      }
+    });
+    const text = document.createElement('span');
+    text.textContent = name;
+    label.append(checkbox, text);
+    trackedExercisesPanel.appendChild(label);
+  });
+}
+
+if (trackedExercisesToggleBtn && trackedExercisesPanel) {
+  trackedExercisesToggleBtn.addEventListener('click', async () => {
+    const opening = trackedExercisesPanel.classList.contains('hidden');
+    trackedExercisesPanel.classList.toggle('hidden', !opening);
+    trackedExercisesToggleBtn.setAttribute('aria-expanded', String(opening));
+    if (!opening) return;
+    trackedExercisesPanel.innerHTML = '<div class="settings-empty">Loading...</div>';
+    await loadExerciseOptions();
+    await syncTrackedExercises();
+    renderTrackedExercisesPanel();
   });
 }
 
@@ -452,7 +557,15 @@ function loadPerformanceList() {
   });
 }
 
+// The record form and saved-entry list only apply to the e1RM view
+function updateProgressControlsVisibility() {
+  const isE1RM = currentProgressView === 'e1RM';
+  document.getElementById('e1rmControls')?.classList.toggle('hidden', !isE1RM);
+  performanceList?.classList.toggle('hidden', !isE1RM || !isPerformanceListVisible);
+}
+
 function updateProgressViewButtons() {
+  updateProgressControlsVisibility();
   progressViewButtons.forEach(button => {
     const isActive = button.dataset.view === currentProgressView;
     button.classList.toggle('btn-primary', isActive);
@@ -484,7 +597,7 @@ if (progressToggleButton && progressArea) {
     progressArea.classList.toggle('hidden');
     progressToggleButton.textContent = progressArea.classList.contains('hidden') ? 'Show progress' : 'Hide progress';
     if (!progressArea.classList.contains('hidden')) {
-      loadExerciseOptions().then(() => {
+      loadExerciseOptions().then(syncTrackedExercises).then(() => {
         loadProgressData();
         if (isPerformanceListVisible) {
           loadPerformanceList();
@@ -502,7 +615,7 @@ if (showDataButton) {
   showDataButton.addEventListener('click', () => {
     if (!performanceList) return;
     isPerformanceListVisible = !isPerformanceListVisible;
-    performanceList.classList.toggle('hidden', !isPerformanceListVisible);
+    updateProgressControlsVisibility();
     showDataButton.textContent = isPerformanceListVisible ? 'Hide Data' : 'Show Data';
     if (isPerformanceListVisible) {
       loadPerformanceList();

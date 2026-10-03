@@ -24,15 +24,7 @@ function renderAuthStatus(authenticated, user, demo) {
 
 async function loadAuthStatus() {
   try {
-    const response = await fetch(`${backendOrigin}/api/me`, {
-      credentials: 'include'
-    });
-
-    if (!response.ok) {
-      throw new Error(`Auth status request failed with ${response.status}`);
-    }
-
-    const result = await response.json();
+    const result = await window.getAuthStatus();
     renderAuthStatus(result.authenticated, result.user, result.demo);
   } catch (error) {
     console.error('Could not load Cognito session:', error);

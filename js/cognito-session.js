@@ -12,6 +12,7 @@ function renderAuthStatus(authenticated, user, demo) {
       : `Signed in as ${user.email || user.username || 'workout user'}`;
     authLink.textContent = 'Log out';
     authLink.href = `${backendOrigin}/logout`;
+    authLink.onclick = () => window.clearAuthToken && window.clearAuthToken();
     if (demoLink) demoLink.hidden = true;
     return;
   }

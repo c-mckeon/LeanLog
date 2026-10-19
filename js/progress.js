@@ -465,13 +465,13 @@ function saveE1RMEntry() {
   const reps = parseInt(document.getElementById('ORMrepsInput')?.value, 10);
   const weight = parseFloat(document.getElementById('ORMweightInput')?.value);
   if (!exerciseKey || isNaN(reps) || reps <= 0 || isNaN(weight) || weight <= 0) {
-    alert('Please select an exercise and enter valid reps and weight.');
+    showNotice('Please select an exercise and enter valid reps and weight.', 'error');
     return;
   }
 
   const exerciseName = getExerciseNameByKey(exerciseKey);
   if (!exerciseName) {
-    alert('Selected exercise could not be found.');
+    showNotice('Selected exercise could not be found.', 'error');
     return;
   }
 
@@ -494,7 +494,7 @@ function saveE1RMEntry() {
     }
   }).catch(error => {
     console.error('Error saving e1RM entry:', error);
-    alert('Could not save the entry.');
+    showNotice('Could not save the entry.', 'error');
   });
 }
 
@@ -523,9 +523,9 @@ function renderPerformanceList(entries) {
     deleteButton.type = 'button';
     deleteButton.textContent = 'Delete';
     deleteButton.className = 'btn btn-sm btn-outline-danger';
-    deleteButton.addEventListener('click', () => {
+    deleteButton.addEventListener('click', async () => {
       if (!entry.key) return;
-      if (!confirm('Delete this e1RM entry?')) return;
+      if (!(await confirmInPlace(deleteButton, { question: 'Sure?' }))) return;
       window.database.ref(`estimoneRepMax/${entry.key}`).remove().then(() => {
         loadPerformanceList();
         loadProgressData();

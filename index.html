@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-CpeIkpdJ.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-X2xg5sAp.css">
 </head>
 <body>
   
@@ -28,6 +28,10 @@
           <input type="checkbox" id="showWeightMovedSetting" checked>
           <span>Show weight moved</span>
         </label>
+        <label class="settings-checkbox-row" for="showSetsRepsCounterSetting">
+          <input type="checkbox" id="showSetsRepsCounterSetting" checked>
+          <span>Show sets/reps counter</span>
+        </label>
         <label class="settings-checkbox-row" for="showWorkoutNotesSetting">
           <input type="checkbox" id="showWorkoutNotesSetting" checked>
           <span>Show workout notes</span>
@@ -39,6 +43,16 @@
         <label class="settings-checkbox-row" for="showPostWorkoutNotesSetting">
           <input type="checkbox" id="showPostWorkoutNotesSetting" checked>
           <span>Show post-workout notes</span>
+        </label>
+        <!-- Saved as settings/workoutBuilder/setsDisplay ('all' or 'cycle') -->
+        <label class="settings-checkbox-row" for="setsDisplaySetting">
+          <input type="checkbox" id="setsDisplaySetting">
+          <span>All sets visible</span>
+        </label>
+        <!-- Saved as settings/workoutBuilder/fitBuilderWidth; off = builder stays full width -->
+        <label class="settings-checkbox-row" for="fitBuilderWidthSetting">
+          <input type="checkbox" id="fitBuilderWidthSetting" checked>
+          <span>Fit builder to visible columns</span>
         </label>
       </div>
 
@@ -275,19 +289,21 @@
                 <div class="exo-add-field">
                   <label for="exerciseCategory">Choose Category</label>
                   <select id="exerciseCategory"></select>
-                </div>
-
-                <div class="row align-items-center" hidden>
-                  <div class="col-auto">
-                    <label>
-                      <input type="checkbox" id="focusCheckbox" hidden> Focus Areas:
-                    </label>
+                  <!-- "Add new category": replaces the dropdown with a name box -->
+                  <div id="categoryAddRow" class="category-inline" hidden>
+                    <div class="category-inline-controls">
+                      <input type="text" id="newCategoryInput" placeholder="New category name…" maxlength="40" aria-label="New category name">
+                      <button type="button" id="saveCategoryBtn" class="exo-btn exo-btn-sm exo-btn-primary">Save</button>
+                      <button type="button" id="cancelCategoryBtn" class="exo-btn exo-btn-sm">Cancel</button>
+                    </div>
+                    <div id="categoryAddHint" class="field-hint field-hint-error" role="alert" hidden></div>
                   </div>
-                  <!-- Preserve the focus container here -->
-                  <div class="col" id="focusContainer" style="display: none;">
-                    <select id="focusCategory" multiple class="form-control">
-                      <option value="addNew">Add New</option>
-                    </select>
+                  <!-- "Remove category": a chip per category, each with its own × -->
+                  <div id="categoryRemoveRow" class="category-inline" hidden>
+                    <span class="category-inline-label">Remove a category:</span>
+                    <div id="categoryChips" class="category-chips"></div>
+                    <div id="categoryRemoveHint" class="field-hint" hidden></div>
+                    <button type="button" id="doneRemovingCategoriesBtn" class="exo-btn exo-btn-sm">Done</button>
                   </div>
                 </div>
 
@@ -349,10 +365,19 @@
                         <select id="variationSelector" aria-label="Variation">
                           <option value="">Default (no variation)</option>
                         </select>
-                        <div class="exo-step-actions">
+                        <!-- "Add variation": replaces the selector and its buttons with a name box -->
+                        <div id="variationAddRow" class="category-inline" hidden>
+                          <div class="category-inline-controls">
+                            <input type="text" id="newVariationInput" placeholder="e.g. Incline, Close grip…" maxlength="40" aria-label="New variation name">
+                            <button type="button" id="saveVariationBtn" class="exo-btn exo-btn-sm exo-btn-primary">Add</button>
+                            <button type="button" id="cancelVariationBtn" class="exo-btn exo-btn-sm">Cancel</button>
+                          </div>
+                        </div>
+                        <div class="exo-step-actions" id="variationActions">
                           <button type="button" id="addExerciseVariationBtn" class="exo-btn exo-btn-sm">Add variation</button>
                           <button type="button" id="removeExerciseVariationBtn" class="exo-btn exo-btn-sm exo-btn-danger" disabled>Remove</button>
                         </div>
+                        <div id="variationHint" class="field-hint field-hint-error" role="alert" hidden></div>
                       </div>
                     </div>
                   </div>
@@ -404,6 +429,7 @@
   </section>
 
   <!-- JavaScript -->
+  <script src="js/notice.js" defer></script>
   <script src="js/api-database.js" defer></script>
   <script src="js/cognito-session.js" defer></script>
   <script src="js/exerciseLibrary.js" defer></script>
@@ -593,30 +619,6 @@ body {
             <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn active" data-view="sofar" hidden>So Far</button>
             <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="monthly">Monthly</button>
             <button type="button" class="btn btn-sm btn-outline-primary volume-view-btn" data-view="coverage">Cov. by month</button>
-          </div>
-
-          <div style="margin-bottom: 12px;">
-            <div id="muscleMatrixArea" class="hidden" style="margin-top: 8px;">
-              <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
-                <button type="button" id="addMuscleGroupBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
-                <button type="button" id="removeMuscleGroupBtn" class="btn btn-sm btn-outline-secondary">Remove muscle group</button>
-                <button type="button" id="addExerciseRowBtn" class="btn btn-sm btn-outline-secondary">Add exercise</button>
-                <button type="button" id="removeExerciseRowBtn" class="btn btn-sm btn-outline-secondary">Remove exercise</button>
-              </div>
-              <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start;">
-                <div style="flex:1 1 480px;">
-                  <div style="overflow-x:auto;">
-                    <table id="muscleMatrixTable" class="table table-sm table-bordered" style="width: auto; max-width: 100%; background:#fff; margin: 0 auto; table-layout: fixed;">
-                      <thead>
-                        <tr id="muscleGroupHeaderRow"></tr>
-                      </thead>
-                      <tbody id="muscleMatrixBody"></tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-              <button type="button" id="saveMuscleMatrixBtn" class="btn btn-sm btn-primary" style="margin-top: 8px;">Save matrix</button>
-            </div>
           </div>
 
           <div id="volumeTableWrapper" style="overflow-x:auto;">

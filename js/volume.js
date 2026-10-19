@@ -31,7 +31,6 @@ let currentVolumeYear = new Date().getFullYear();
 let currentVolumeMonth = new Date().getMonth();
 let currentVolumeView = 'sofar';
 let exerciseMuscleMatrix = [];
-let matrixMuscleGroups = ['Chest', 'Back', 'Shoulders', 'Biceps', 'Triceps', 'Core', 'Legs'];
 let monthlyTargets = {};
 let currentTargetMonthKey = '';
 const defaultVolumeTarget = 40;
@@ -261,27 +260,6 @@ function updateVolumeViewButtons() {
     button.classList.toggle('btn-primary', isActive);
     button.classList.toggle('btn-outline-primary', !isActive);
     button.classList.toggle('active', isActive);
-  });
-}
-
-function renderMatrixHeaders() {
-  const headerRow = document.getElementById('muscleGroupHeaderRow');
-  if (!headerRow) return;
-
-  headerRow.innerHTML = '';
-
-  const exerciseHeader = document.createElement('th');
-  exerciseHeader.style.textAlign = 'center';
-  exerciseHeader.style.width = '170px';
-  exerciseHeader.textContent = 'Exercise';
-  headerRow.appendChild(exerciseHeader);
-
-  matrixMuscleGroups.forEach(group => {
-    const cell = document.createElement('th');
-    cell.style.textAlign = 'center';
-    cell.style.width = '90px';
-    cell.textContent = group;
-    headerRow.appendChild(cell);
   });
 }
 
@@ -517,19 +495,14 @@ const volumeToggleButton = document.getElementById('toggleVolumeBtn');
 const volumeArea = document.getElementById('volumearea');
 const volumePrevMonthButton = document.getElementById('volumePrevMonth');
 const volumeNextMonthButton = document.getElementById('volumeNextMonth');
-const muscleMatrixArea = document.getElementById('muscleMatrixArea');
-const saveMuscleMatrixButton = document.getElementById('saveMuscleMatrixBtn');
-const muscleMatrixBody = document.getElementById('muscleMatrixBody');
-const addMuscleGroupButton = document.getElementById('addMuscleGroupBtn');
-const removeMuscleGroupButton = document.getElementById('removeMuscleGroupBtn');
-const addExerciseRowButton = document.getElementById('addExerciseRowBtn');
-const removeExerciseRowButton = document.getElementById('removeExerciseRowBtn');
 const targetMonthSelect = document.getElementById('targetMonthSelect');
 const targetEditorRows = document.getElementById('targetEditorRows');
 const saveTargetsButton = document.getElementById('saveTargetsBtn');
 
 function renderTargetEditor() {
   if (!targetEditorRows) return;
+  // Re-rendering drops any open "new group" row, so the add link works again
+  document.getElementById('addTargetGroupBtn')?.removeAttribute('disabled');
 
   const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
   const monthTargets = monthlyTargets[monthKey] || {};
@@ -552,14 +525,53 @@ function renderTargetEditor() {
   `).join('');
 }
 
+// "Add muscle group" adds an editable row (name + sets) at the bottom of the targets list.
 function addTargetMuscleGroup() {
-  if (!window.database) return;
-  const name = (prompt('New muscle group name:') || '').trim();
-  if (!name) return;
-  if (userMuscleGroups.some(group => group.toLowerCase() === name.toLowerCase())) {
-    alert(`${name} already exists.`);
-    return;
+  if (!window.database || !targetEditorRows) return;
+  const openRow = targetEditorRows.querySelector('.target-new-row');
+  if (openRow) return openRow.querySelector('.target-new-name').focus();
+
+  targetEditorRows.querySelector('.settings-empty')?.remove();
+  targetEditorRows.insertAdjacentHTML('beforeend', `
+    <div class="target-new-row">
+      <div class="target-new-fields">
+        <input type="text" class="form-control form-control-sm target-new-name" placeholder="New group…" maxlength="40" aria-label="New muscle group name">
+        <input type="number" class="form-control form-control-sm target-new-sets" value="${Number(defaultVolumeTarget)}" min="0" step="1" aria-label="Sets for the new muscle group">
+        <button type="button" class="exo-btn exo-btn-sm exo-btn-primary target-new-save" aria-label="Add muscle group">✓</button>
+        <button type="button" class="exo-btn exo-btn-sm target-new-cancel" aria-label="Cancel">×</button>
+      </div>
+      <div class="field-hint field-hint-error" role="alert" hidden></div>
+    </div>`);
+  if (addTargetGroupButton) addTargetGroupButton.disabled = true;
+  targetEditorRows.querySelector('.target-new-name').focus();
+}
+
+function setTargetNewRowHint(message) {
+  const row = targetEditorRows?.querySelector('.target-new-row');
+  if (!row) return;
+  const hint = row.querySelector('.field-hint');
+  hint.textContent = message;
+  hint.hidden = !message;
+  row.querySelector('.target-new-name').classList.toggle('input-invalid', Boolean(message));
+}
+
+function closeTargetNewRow() {
+  captureTargetInputs();
+  renderTargetEditor();
+}
+
+function saveTargetNewRow() {
+  const row = targetEditorRows?.querySelector('.target-new-row');
+  if (!row) return;
+  const nameInput = row.querySelector('.target-new-name');
+  const name = nameInput.value.trim();
+  if (!name) return nameInput.focus();
+  const existing = userMuscleGroups.find(group => group.toLowerCase() === name.toLowerCase());
+  if (existing) {
+    setTargetNewRowHint(`${existing} already exists`);
+    return nameInput.focus();
   }
+  const sets = Number(row.querySelector('.target-new-sets').value || defaultVolumeTarget);
 
   captureTargetInputs();
   const next = [...userMuscleGroups, name];
@@ -569,11 +581,29 @@ function addTargetMuscleGroup() {
     muscleGroups = userMuscleGroups;
     // Make the exercise editor reload the shared list the next time it renders.
     if (typeof volumeGroupsLoaded !== 'undefined') volumeGroupsLoaded = false;
+    // The sets typed in the new row count as an unsaved target, like the other boxes
+    const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
+    monthlyTargets[monthKey] = { ...(monthlyTargets[monthKey] || {}), [name]: sets };
     renderTargetEditor();
     if (volumeArea && !volumeArea.classList.contains('hidden')) loadVolumeData();
   }).catch(error => {
     console.error('Error saving muscle group', error);
-    alert('Could not save the muscle group');
+    setTargetNewRowHint('Could not save the muscle group. Please try again.');
+  });
+}
+
+if (targetEditorRows) {
+  targetEditorRows.addEventListener('click', (event) => {
+    if (event.target.closest('.target-new-save')) saveTargetNewRow();
+    else if (event.target.closest('.target-new-cancel')) closeTargetNewRow();
+  });
+  targetEditorRows.addEventListener('input', (event) => {
+    if (event.target.classList.contains('target-new-name')) setTargetNewRowHint('');
+  });
+  targetEditorRows.addEventListener('keydown', (event) => {
+    if (!event.target.closest('.target-new-row')) return;
+    if (event.key === 'Enter') { event.preventDefault(); saveTargetNewRow(); }
+    if (event.key === 'Escape') closeTargetNewRow();
   });
 }
 
@@ -659,7 +689,7 @@ function saveVolumeTargets() {
 
 // Copy the targets on screen to every later month: each month up to December next year
 // (the end of the month list) plus any later month that already has targets. Saves straight away.
-function applyTargetsToFutureMonths() {
+async function applyTargetsToFutureMonths(event) {
   if (!window.database) return;
   captureTargetInputs();
   const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
@@ -684,7 +714,8 @@ function applyTargetsToFutureMonths() {
 
   const sortedKeys = [...laterKeys].sort();
   const range = `${formatTargetMonthLabel(sortedKeys[0])} – ${formatTargetMonthLabel(sortedKeys[sortedKeys.length - 1])}`;
-  if (!confirm(`Apply these targets to ${range}? This replaces any targets already set for those months.`)) return;
+  if (status) status.textContent = '';
+  if (!(await confirmInPlace(event.currentTarget, { question: `Apply to ${range}?`, timeout: 6000 }))) return;
 
   sortedKeys.forEach(key => { monthlyTargets[key] = { ...targets }; });
   window.database.ref('volumeTargets').set(monthlyTargets).then(() => {
@@ -696,56 +727,6 @@ function applyTargetsToFutureMonths() {
   });
 }
 
-function renderMuscleMatrix() {
-  if (!muscleMatrixBody) return;
-  muscleMatrixBody.innerHTML = '';
-  renderMatrixHeaders();
-
-  const sourceMatrix = (exerciseMuscleMatrix.length ? exerciseMuscleMatrix : exerciseMatrixDefaults).map(entry => ({
-    ...entry,
-    muscleGroups: entry.muscleGroups || {}
-  }));
-
-  sourceMatrix.forEach(entry => {
-    const row = document.createElement('tr');
-    const muscleMap = entry.muscleGroups || {};
-    row.innerHTML = `
-      <td style="width: 170px;"><input type="text" class="form-control form-control-sm" value="${entry.exercise}" data-field="exercise"></td>
-      ${matrixMuscleGroups.map(group => `
-        <td style="text-align:center;"><input type="number" class="form-control form-control-sm" style="width:78px; margin:auto;" value="${Number(muscleMap[group] || 0)}" data-group="${group}" min="0" step="1"></td>
-      `).join('')}
-    `;
-    muscleMatrixBody.appendChild(row);
-  });
-}
-
-function saveMuscleMatrix() {
-  if (!window.database) return;
-
-  const rows = Array.from(muscleMatrixBody.querySelectorAll('tr'));
-  const nextMatrix = rows.map(row => {
-    const exerciseInput = row.querySelector('input[data-field="exercise"]');
-    const muscleGroupsData = {};
-    matrixMuscleGroups.forEach(group => {
-      const value = row.querySelector(`input[data-group="${group}"]`);
-      muscleGroupsData[group] = Number(value?.value || 0);
-    });
-    return {
-      exercise: exerciseInput ? exerciseInput.value.trim() : '',
-      muscleGroups: muscleGroupsData
-    };
-  }).filter(entry => entry.exercise);
-
-  exerciseMuscleMatrix = nextMatrix;
-  window.database.ref('muscleMatrix').set(nextMatrix).then(() => {
-    alert('Muscle matrix saved');
-    loadVolumeData();
-  }).catch(error => {
-    console.error('Error saving muscle matrix', error);
-    alert('Could not save muscle matrix');
-  });
-}
-
 function loadMuscleMatrix() {
   if (!window.database) return;
 
@@ -753,93 +734,12 @@ function loadMuscleMatrix() {
     const data = snapshot.val();
     if (Array.isArray(data) && data.length) {
       exerciseMuscleMatrix = data;
-      if (Array.isArray(data[0]?.muscleGroups)) {
-        matrixMuscleGroups = data[0].muscleGroups.map(group => group);
-      }
     } else {
       exerciseMuscleMatrix = exerciseMatrixDefaults;
     }
-    renderMuscleMatrix();
   }).catch(() => {
     exerciseMuscleMatrix = exerciseMatrixDefaults;
-    renderMuscleMatrix();
   });
-}
-
-function addMuscleGroup() {
-  const groupName = prompt('Enter new muscle group name');
-  if (!groupName) return;
-  const cleaned = groupName.trim();
-  if (!cleaned) return;
-  if (matrixMuscleGroups.includes(cleaned)) {
-    alert('That muscle group already exists');
-    return;
-  }
-  matrixMuscleGroups.push(cleaned);
-  exerciseMuscleMatrix = exerciseMuscleMatrix.map(entry => ({
-    ...entry,
-    muscleGroups: { ...entry.muscleGroups, [cleaned]: 0 }
-  }));
-  renderMuscleMatrix();
-}
-
-function removeMuscleGroup() {
-  if (matrixMuscleGroups.length <= 1) {
-    alert('At least one muscle group is required');
-    return;
-  }
-  const groupName = prompt('Enter the muscle group to remove');
-  if (!groupName) return;
-  const cleaned = groupName.trim();
-  if (!matrixMuscleGroups.includes(cleaned)) {
-    alert('That muscle group was not found');
-    return;
-  }
-  matrixMuscleGroups = matrixMuscleGroups.filter(group => group !== cleaned);
-  exerciseMuscleMatrix = exerciseMuscleMatrix.map(entry => {
-    const updated = { ...entry.muscleGroups };
-    delete updated[cleaned];
-    return { ...entry, muscleGroups: updated };
-  });
-  renderMuscleMatrix();
-}
-
-function addExerciseRow() {
-  const exerciseName = prompt('Enter new exercise name');
-  if (!exerciseName) return;
-  const cleaned = exerciseName.trim();
-  if (!cleaned) return;
-  const muscleGroupsData = {};
-  matrixMuscleGroups.forEach(group => {
-    muscleGroupsData[group] = 0;
-  });
-  exerciseMuscleMatrix.push({ exercise: cleaned, muscleGroups: muscleGroupsData });
-  renderMuscleMatrix();
-}
-
-function removeExerciseRow() {
-  if (exerciseMuscleMatrix.length <= 1) {
-    alert('At least one exercise is required');
-    return;
-  }
-  const exerciseName = prompt('Enter the exercise name to remove');
-  if (!exerciseName) return;
-  const cleaned = exerciseName.trim();
-  const index = exerciseMuscleMatrix.findIndex(entry => entry.exercise.toLowerCase() === cleaned.toLowerCase());
-  if (index < 0) {
-    alert('That exercise was not found');
-    return;
-  }
-  exerciseMuscleMatrix.splice(index, 1);
-  renderMuscleMatrix();
-}
-
-function setMuscleMatrixVisibility(show) {
-  if (!muscleMatrixArea) return;
-  muscleMatrixArea.classList.toggle('hidden', !show);
-  if (show) {
-    loadMuscleMatrix();
-  }
 }
 
 const volumeTargetsToggleBtn = document.getElementById('volumeTargetsToggleBtn');
@@ -855,10 +755,6 @@ if (volumeTargetsToggleBtn && volumeTargetsPanel) {
       loadVolumeTargets();
     }
   });
-}
-
-if (saveMuscleMatrixButton) {
-  saveMuscleMatrixButton.addEventListener('click', saveMuscleMatrix);
 }
 
 const addTargetGroupButton = document.getElementById('addTargetGroupBtn');
@@ -880,22 +776,6 @@ if (targetMonthSelect) {
     currentTargetMonthKey = targetMonthSelect.value;
     renderTargetEditor();
   });
-}
-
-if (addMuscleGroupButton) {
-  addMuscleGroupButton.addEventListener('click', addMuscleGroup);
-}
-
-if (removeMuscleGroupButton) {
-  removeMuscleGroupButton.addEventListener('click', removeMuscleGroup);
-}
-
-if (addExerciseRowButton) {
-  addExerciseRowButton.addEventListener('click', addExerciseRow);
-}
-
-if (removeExerciseRowButton) {
-  removeExerciseRowButton.addEventListener('click', removeExerciseRow);
 }
 
 function initVolumeEvents() {

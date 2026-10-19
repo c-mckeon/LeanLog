@@ -199,9 +199,6 @@ const savedWorkoutList = document.getElementById('savedWorkoutList');
 const newExerciseName = document.getElementById('newExerciseName');
 const exerciseCategory = document.getElementById('exerciseCategory');
 const saveNewExerciseBtn = document.getElementById('saveNewExerciseBtn');
-const focusCategory = document.getElementById('focusCategory');
-const focusCheckbox = document.getElementById('focusCheckbox');
-const focusContainer = document.getElementById('focusContainer');
 const addExerciseFormWrapper = document.getElementById('addExerciseFormWrapper');
 const toggleAddExerciseFormBtn = document.getElementById('toggleAddExerciseFormBtn');
 const settingsGearBtn = document.getElementById('settingsGearBtn');
@@ -211,10 +208,23 @@ const showWeightMovedCheckbox = document.getElementById('showWeightMovedSetting'
 const showWorkoutNotesCheckbox = document.getElementById('showWorkoutNotesSetting');
 const showPostWorkoutNotesCheckbox = document.getElementById('showPostWorkoutNotesSetting');
 const showSetNotesCheckbox = document.getElementById('showSetNotesSetting');
+const showSetsRepsCounterCheckbox = document.getElementById('showSetsRepsCounterSetting');
+const setsDisplayCheckbox = document.getElementById('setsDisplaySetting');
+const fitBuilderWidthCheckbox = document.getElementById('fitBuilderWidthSetting');
 let showWeightMoved = true;
 let showWorkoutNotes = true;
 let showPostWorkoutNotes = true;
 let showSetNotes = true;
+let showSetsRepsCounter = true; // the "3 sets • 30 reps" part of each exercise's summary
+// Workout builder sets: 'cycle' = one set at a time with ▲ ▼, 'all' = a row per set
+let setsDisplayMode = 'cycle';
+// true = the builder shrinks to fit its visible columns; false = it stays full width
+let fitBuilderWidth = true;
+
+function applyBuilderWidthMode() {
+  document.getElementById('workoutBuilderSection')?.classList.toggle('builder-full-width', !fitBuilderWidth);
+  if (fitBuilderWidthCheckbox) fitBuilderWidthCheckbox.checked = fitBuilderWidth;
+}
 
 function setExercisePickerOpen(isOpen) {
   if (!exercisePickerMenu || !exercisePickerTrigger) return;
@@ -388,6 +398,53 @@ if (showSetNotesCheckbox) {
   });
 }
 
+if (setsDisplayCheckbox) {
+  setsDisplayCheckbox.addEventListener('change', async () => {
+    const previousValue = setsDisplayMode;
+    setsDisplayMode = setsDisplayCheckbox.checked ? 'all' : 'cycle';
+    renderExerciseList();
+    try {
+      await database.ref('settings/workoutBuilder').update({ setsDisplay: setsDisplayMode });
+    } catch (error) {
+      setsDisplayMode = previousValue;
+      setsDisplayCheckbox.checked = previousValue === 'all';
+      renderExerciseList();
+      console.error('Error saving setsDisplay setting:', error);
+    }
+  });
+}
+
+if (fitBuilderWidthCheckbox) {
+  fitBuilderWidthCheckbox.addEventListener('change', async () => {
+    const previousValue = fitBuilderWidth;
+    fitBuilderWidth = fitBuilderWidthCheckbox.checked;
+    applyBuilderWidthMode();
+    try {
+      await database.ref('settings/workoutBuilder').update({ fitBuilderWidth });
+    } catch (error) {
+      fitBuilderWidth = previousValue;
+      applyBuilderWidthMode();
+      console.error('Error saving fitBuilderWidth setting:', error);
+    }
+  });
+}
+
+if (showSetsRepsCounterCheckbox) {
+  showSetsRepsCounterCheckbox.addEventListener('change', async () => {
+    const previousValue = showSetsRepsCounter;
+    showSetsRepsCounter = showSetsRepsCounterCheckbox.checked;
+    renderExerciseList();
+    try {
+      await database.ref('settings/workoutBuilder').update({ showSetsRepsCounter });
+    } catch (error) {
+      showSetsRepsCounter = previousValue;
+      showSetsRepsCounterCheckbox.checked = previousValue;
+      renderExerciseList();
+      console.error('Error saving showSetsRepsCounter setting:', error);
+    }
+  });
+}
+
 if (showPostWorkoutNotesCheckbox) {
   showPostWorkoutNotesCheckbox.addEventListener('change', async () => {
     const previousValue = showPostWorkoutNotes;
@@ -461,11 +518,6 @@ function getWorkoutDraftRef() {
 let currentWorkout = { intensity: '', intensityNote: '' };
 const workoutApiOrigin = window.WORKOUT_BACKEND_ORIGIN || 'https://lean-backend.agreeableplant-a51f439e.northeurope.azurecontainerapps.io';
 
-// Toggle focus area selection visibility
-focusCheckbox.addEventListener('change', () => {
-    focusContainer.style.display = focusCheckbox.checked ? 'block' : 'none';
-});
-
 if (toggleAddExerciseFormBtn && addExerciseFormWrapper) {
   toggleAddExerciseFormBtn.addEventListener('click', () => {
     addExerciseFormWrapper.classList.toggle('hidden');
@@ -538,26 +590,6 @@ async function computeExerciseFrequency() {
   return frequencyMap;
 }
 
-// Load focus areas dynamically, including an "Add New Focus Area" option
-async function loadFocusAreas() {
-  focusCategory.innerHTML = "";
-  const response = await fetch(`${workoutApiOrigin}/api/focus-areas`, { credentials: 'include' });
-  if (!response.ok) throw new Error(`Could not load focus areas (${response.status}).`);
-  const result = await response.json();
-
-  (result.focusAreas || []).forEach((focusArea) => {
-    const option = document.createElement("option");
-    option.value = focusArea;
-    option.textContent = focusArea;
-    focusCategory.appendChild(option);
-  });
-
-  const addOption = document.createElement("option");
-  addOption.value = "addNew";
-  addOption.textContent = "Add New Focus Area";
-  focusCategory.appendChild(addOption);
-}
-
 function getExerciseCategoriesRef() {
   return database.ref('settings/exerciseCategories');
 }
@@ -620,92 +652,121 @@ async function saveExerciseCategories() {
   }
 }
 
-async function addExerciseCategory() {
-  const categoryName = prompt('Enter a new category name:');
-  if (!categoryName) return;
+// Category add / remove happen inline under the "Choose Category" dropdown.
+// Add: the dropdown is swapped for a name box. Remove: a chip per category, each with ×.
+const categoryAddRow = document.getElementById('categoryAddRow');
+const newCategoryInput = document.getElementById('newCategoryInput');
+const categoryAddHint = document.getElementById('categoryAddHint');
+const categoryRemoveRow = document.getElementById('categoryRemoveRow');
+const categoryChips = document.getElementById('categoryChips');
+const categoryRemoveHint = document.getElementById('categoryRemoveHint');
+let lastChosenCategory = '';
 
-  const cleaned = categoryName.trim();
-  if (!cleaned) return;
+function setCategoryHint(hint, message) {
+  hint.textContent = message;
+  hint.hidden = !message;
+}
 
-  const exists = exerciseCategories.some((category) => category.toLowerCase() === cleaned.toLowerCase());
-  if (exists) {
-    alert('Category already exists');
+function closeCategoryEditors(selectValue = lastChosenCategory) {
+  categoryAddRow.hidden = true;
+  categoryRemoveRow.hidden = true;
+  exerciseCategory.hidden = false;
+  renderExerciseCategoryOptions();
+  if (exerciseCategories.includes(selectValue)) exerciseCategory.value = selectValue;
+  lastChosenCategory = exerciseCategory.value;
+}
+
+function openAddCategory() {
+  exerciseCategory.hidden = true;
+  categoryAddRow.hidden = false;
+  newCategoryInput.value = '';
+  newCategoryInput.classList.remove('input-invalid');
+  setCategoryHint(categoryAddHint, '');
+  newCategoryInput.focus();
+}
+
+async function saveNewCategory() {
+  const cleaned = newCategoryInput.value.trim();
+  if (!cleaned) {
+    newCategoryInput.focus();
+    return;
+  }
+  const existing = exerciseCategories.find((category) => category.toLowerCase() === cleaned.toLowerCase());
+  if (existing) {
+    newCategoryInput.classList.add('input-invalid');
+    setCategoryHint(categoryAddHint, `"${existing}" already exists`);
+    newCategoryInput.focus();
     return;
   }
 
   exerciseCategories.push(cleaned);
   exerciseCategories.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
   await saveExerciseCategories();
-  renderExerciseCategoryOptions();
-  exerciseCategory.value = cleaned;
+  closeCategoryEditors(cleaned);
 }
 
-async function removeExerciseCategory() {
-  if (exerciseCategories.length <= 1) {
-    alert('At least one category is required');
-    return;
-  }
-
-  const categoryName = prompt('Enter the category name to remove:');
-  if (!categoryName) return;
-
-  const cleaned = categoryName.trim();
-  const index = exerciseCategories.findIndex((category) => category.toLowerCase() === cleaned.toLowerCase());
-  if (index < 0) {
-    alert('Category not found');
-    return;
-  }
-
-  exerciseCategories.splice(index, 1);
-  await saveExerciseCategories();
-  renderExerciseCategoryOptions();
+function renderCategoryChips() {
+  const onlyOne = exerciseCategories.length <= 1;
+  categoryChips.innerHTML = exerciseCategories.map((category) => `
+    <span class="category-chip" data-category="${escapeExerciseHtml(category)}">
+      ${escapeExerciseHtml(category)}
+      <button type="button" class="category-chip-remove" aria-label="Remove ${escapeExerciseHtml(category)}" ${onlyOne ? 'hidden' : ''}>×</button>
+    </span>`).join('');
+  setCategoryHint(categoryRemoveHint, onlyOne ? 'You need at least one category, so the last one can\'t be removed.' : '');
 }
 
-if (exerciseCategory) {
-  exerciseCategory.addEventListener('change', async () => {
-    if (exerciseCategory.value === 'addNewCategory') {
-      await addExerciseCategory();
-    } else if (exerciseCategory.value === 'removeCategory') {
-      await removeExerciseCategory();
+function openRemoveCategories() {
+  exerciseCategory.hidden = true;
+  categoryRemoveRow.hidden = false;
+  renderCategoryChips();
+}
+
+if (exerciseCategory && categoryAddRow && categoryRemoveRow) {
+  lastChosenCategory = exerciseCategory.value;
+  exerciseCategory.addEventListener('change', () => {
+    if (exerciseCategory.value === 'addNewCategory') openAddCategory();
+    else if (exerciseCategory.value === 'removeCategory') openRemoveCategories();
+    else lastChosenCategory = exerciseCategory.value;
+  });
+
+  document.getElementById('saveCategoryBtn').addEventListener('click', saveNewCategory);
+  document.getElementById('cancelCategoryBtn').addEventListener('click', () => closeCategoryEditors());
+  newCategoryInput.addEventListener('input', () => {
+    newCategoryInput.classList.remove('input-invalid');
+    setCategoryHint(categoryAddHint, '');
+  });
+  newCategoryInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); saveNewCategory(); }
+    if (event.key === 'Escape') closeCategoryEditors();
+  });
+
+  // × asks "Remove? Yes / No" inside the chip; Yes removes it straight away.
+  categoryChips.addEventListener('click', async (event) => {
+    const chip = event.target.closest('.category-chip');
+    if (!chip) return;
+    const category = chip.dataset.category;
+
+    if (event.target.closest('.category-chip-remove')) {
+      renderCategoryChips(); // closes any other chip that was asking
+      const fresh = categoryChips.querySelector(`.category-chip[data-category="${CSS.escape(category)}"]`);
+      fresh.classList.add('is-confirming');
+      fresh.innerHTML = `${escapeExerciseHtml(category)} → Remove?
+        <span class="category-chip-confirm">
+          <button type="button" class="category-chip-yes">Yes</button>
+          <button type="button" class="category-chip-no">No</button>
+        </span>`;
+      fresh.querySelector('.category-chip-yes').focus();
+    } else if (event.target.closest('.category-chip-no')) {
+      renderCategoryChips();
+    } else if (event.target.closest('.category-chip-yes')) {
+      exerciseCategories = exerciseCategories.filter((name) => name !== category);
+      await saveExerciseCategories();
+      renderExerciseCategoryOptions();
+      renderCategoryChips();
     }
   });
+  document.getElementById('doneRemovingCategoriesBtn').addEventListener('click', () => closeCategoryEditors());
 }
-
-// Detect when "Add New Focus Area" is selected
-focusCategory.addEventListener("change", function() {
-  if (focusCategory.value === "addNew") {
-      const newFocusArea = prompt("Enter a new focus area:");
-
-      if (newFocusArea) {
-          const sanitizedFocusArea = newFocusArea.trim();
-
-          // Check if it already exists
-          database.ref(`focusareas/${sanitizedFocusArea}`).once("value", snapshot => {
-              if (snapshot.exists()) {
-                  alert("Focus area already exists!");
-              } else {
-                    createFocusArea(sanitizedFocusArea).then(() => {
-                      const newOption = document.createElement("option");
-                      newOption.value = sanitizedFocusArea;
-                      newOption.textContent = sanitizedFocusArea;
-                      focusCategory.insertBefore(newOption, focusCategory.lastElementChild);
-                      newOption.selected = true;
-                    }).catch((error) => {
-                      alert(error.message);
-                    });
-              }
-          });
-      }
-
-      // Reset selection to prevent re-triggering
-      focusCategory.value = "";
-  }
-});
-
-// Ensure focus area selection only appears when checkbox is checked
-focusCheckbox.addEventListener('change', () => {
-  focusContainer.style.display = focusCheckbox.checked ? 'block' : 'none';
-});
 
 function setupWorkoutYearSelector() {
   const yearSelect = document.getElementById('workout-year-filter');
@@ -753,19 +814,12 @@ async function postToWorkoutApi(path, body) {
   return requestWorkoutApi(path, 'POST', body);
 }
 
-async function createFocusArea(name) {
-  return postToWorkoutApi('/api/focus-areas', { name });
-}
-
 saveNewExerciseBtn.addEventListener('click', async () => {
     const name = newExerciseName.value.trim();
     const category = exerciseCategory.value;
-  const selectedFocusAreas = focusCheckbox?.checked
-        ? Array.from(focusCategory.selectedOptions).map(opt => opt.value)
-        : [];
 
     if (!name) {
-        alert('Please enter an exercise name.');
+        showNotice('Please enter an exercise name.', 'error');
         return;
     }
 
@@ -773,7 +827,7 @@ saveNewExerciseBtn.addEventListener('click', async () => {
       await postToWorkoutApi('/api/exercises', {
         name,
         category,
-        focusAreas: selectedFocusAreas,
+        focusAreas: [],
         fields: ['sets', 'reps', 'weight']
       });
       newExerciseName.value = '';
@@ -781,7 +835,7 @@ saveNewExerciseBtn.addEventListener('click', async () => {
       if (window.refreshTrackedExercises) window.refreshTrackedExercises();
       collapseAddEditSection();
     } catch (error) {
-      alert(error.message);
+      showNotice(error.message, 'error');
     }
 });
 
@@ -895,7 +949,7 @@ async function addSelectedLibraryExercise() {
     if (window.refreshTrackedExercises) window.refreshTrackedExercises();
     collapseAddEditSection();
   } catch (error) {
-    alert(error.message);
+    showNotice(error.message, 'error');
   } finally {
     addLibraryExerciseBtn.disabled = false;
   }
@@ -924,7 +978,7 @@ addExerciseBtn.addEventListener('click', () => {
     const exerciseName = selectedOption.text;
 
     if (!exerciseId || selectedExercises.some(e => e.id === exerciseId)) {
-        alert("Exercise already exists");
+        showNotice("Exercise already exists", 'error');
         return;
     }
 
@@ -992,7 +1046,13 @@ async function loadWorkoutBuilderSettings() {
     showWorkoutNotes = settings.showWorkoutNotes !== false;
     showPostWorkoutNotes = settings.showPostWorkoutNotes !== false;
     showSetNotes = settings.showSetNotes !== false;
+    showSetsRepsCounter = settings.showSetsRepsCounter !== false;
+    if (showSetsRepsCounterCheckbox) showSetsRepsCounterCheckbox.checked = showSetsRepsCounter;
     if (showSetNotesCheckbox) showSetNotesCheckbox.checked = showSetNotes;
+    setsDisplayMode = settings.setsDisplay === 'all' ? 'all' : 'cycle';
+    fitBuilderWidth = settings.fitBuilderWidth !== false;
+    applyBuilderWidthMode();
+    if (setsDisplayCheckbox) setsDisplayCheckbox.checked = setsDisplayMode === 'all';
     if (showWorkoutNotesCheckbox) showWorkoutNotesCheckbox.checked = showWorkoutNotes;
     if (showPostWorkoutNotesCheckbox) showPostWorkoutNotesCheckbox.checked = showPostWorkoutNotes;
     applyWorkoutNoteVisibility();
@@ -1248,7 +1308,7 @@ function buildPastExerciseHtml(exercise, index) {
         <label class="we-field">Note
           <input type="text" id="note_${index}" value="${escapeExerciseHtml(exercise.note || '')}">
         </label>
-        <button type="button" class="exo-btn exo-btn-sm exo-btn-danger" onclick="deleteExercise(${index})">Delete exercise</button>
+        <button type="button" class="exo-btn exo-btn-sm exo-btn-danger" onclick="deleteExercise(${index}, this)">Delete exercise</button>
       </div>
       <div class="we-exercise-sets">
         <div class="we-sets-header">
@@ -1499,7 +1559,7 @@ function saveChanges() {
 
     if (isNewWorkout) {
       if (!updatedWorkout.date || !String(updatedWorkout.date).trim()) {
-        alert("Please choose a date for the workout.");
+        showNotice("Please choose a date for the workout.", 'error');
         return;
       }
       requestWorkoutApi("/api/workouts", "POST", updatedWorkout)
@@ -1512,7 +1572,7 @@ function saveChanges() {
           displayCurrentNode();
           collapseAddEditSection();
         })
-        .catch(error => alert("Error: " + error.message));
+        .catch(error => showNotice("Error: " + error.message, 'error'));
       return;
     }
 
@@ -1525,11 +1585,11 @@ function saveChanges() {
         renderWorkoutNav();
         collapseAddEditSection();
       })
-      .catch(error => alert("Error: " + error.message));
+      .catch(error => showNotice("Error: " + error.message, 'error'));
 }
 
-function deleteExercise(index) {
-  if (!confirm("Are you sure you want to delete this exercise?")) return;
+async function deleteExercise(index, button) {
+  if (!(await confirmInPlace(button, { question: "Delete?" }))) return;
 
   if (isNewWorkout) {
     document.querySelector(`#fields .exercise-entry[data-index="${index}"]`)?.remove();
@@ -1551,20 +1611,17 @@ function deleteExercise(index) {
   }).then(() => {
       displayCurrentNode(); // Refresh UI
   }).catch(error => {
-      alert("Error deleting exercise: " + error.message);
+      showNotice("Error deleting exercise: " + error.message, 'error');
   });
 }
 
 
-function deleteworkout() {
+async function deleteworkout(event) {
   if (isNewWorkout) {
     cancelNewWorkout();
     return;
   }
-  // Confirm the deletion action with the user.
-  if (!confirm("Are you sure you want to delete this workout? This action cannot be undone.")) {
-    return;
-  }
+  if (!(await confirmInPlace(event.currentTarget, { question: 'Delete workout?' }))) return;
   
   // Retrieve the current workout ID using your workoutKeys array and currentIndex.
   var workoutID = workoutKeys[currentIndex];
@@ -1573,7 +1630,7 @@ function deleteworkout() {
   // Remove the workout from the Firebase database.
   database.ref(fullPath).remove()
     .then(() => {
-      alert("Workout deleted successfully!");
+      showNotice("Workout deleted successfully!", 'success');
       
       // Refresh local index and editor UI.
       workoutKeys.splice(currentIndex, 1);
@@ -1589,7 +1646,7 @@ function deleteworkout() {
       }
     })
     .catch(error => {
-      alert("Error deleting workout: " + error.message);
+      showNotice("Error deleting workout: " + error.message, 'error');
     });
 }
 
@@ -1783,34 +1840,71 @@ async function persistExerciseUpdates(exerciseId, updates) {
   });
 }
 
+// "Add variation" swaps the variation selector for an inline name box.
 const addExerciseVariationButton = document.getElementById('addExerciseVariationBtn');
-if (addExerciseVariationButton) {
-  addExerciseVariationButton.addEventListener('click', async () => {
-    const exerciseId = getCurrentExerciseId();
-    const exercise = exerciseId && exerciseDataMap[exerciseId];
-    if (!exercise) return;
+const variationAddRow = document.getElementById('variationAddRow');
+const newVariationInput = document.getElementById('newVariationInput');
+const variationHint = document.getElementById('variationHint');
 
-    const variationName = prompt(`Add a variation for ${exercise.name || 'this exercise'}:`)?.trim();
-    if (!variationName) return;
+function setVariationHint(message) {
+  if (!variationHint) return;
+  variationHint.textContent = message;
+  variationHint.hidden = !message;
+}
 
-    if (editorVariations.some((variation) => variation.toLowerCase() === variationName.toLowerCase())) {
-      alert('That variation already exists for this exercise.');
-      return;
-    }
+function setVariationAddOpen(open) {
+  document.getElementById('variationSelector').hidden = open;
+  document.getElementById('variationActions').hidden = open;
+  variationAddRow.hidden = !open;
+  newVariationInput.classList.remove('input-invalid');
+  setVariationHint('');
+  if (open) {
+    newVariationInput.value = '';
+    newVariationInput.focus();
+  }
+}
 
-    captureVolumeRows();
-    const updatedVariations = [...editorVariations, variationName];
+async function saveNewVariation() {
+  const exerciseId = getCurrentExerciseId();
+  if (!exerciseId || !exerciseDataMap[exerciseId]) return setVariationAddOpen(false);
+  const variationName = newVariationInput.value.trim();
+  if (!variationName) return newVariationInput.focus();
 
-    try {
-      await persistExerciseUpdates(exerciseId, { variations: updatedVariations });
-      editorVariations = updatedVariations;
-      currentVariation = variationName;
-      renderVariationSelector();
-      renderVolumeTracking();
-    } catch (error) {
-      console.error('Error saving exercise variation:', error);
-      alert('Could not save the variation. Please try again.');
-    }
+  const existing = editorVariations.find((variation) => variation.toLowerCase() === variationName.toLowerCase());
+  if (existing) {
+    newVariationInput.classList.add('input-invalid');
+    setVariationHint(`"${existing}" already exists`);
+    return newVariationInput.focus();
+  }
+
+  captureVolumeRows();
+  const updatedVariations = [...editorVariations, variationName];
+  try {
+    await persistExerciseUpdates(exerciseId, { variations: updatedVariations });
+    editorVariations = updatedVariations;
+    currentVariation = variationName;
+    setVariationAddOpen(false);
+    renderVariationSelector();
+    renderVolumeTracking();
+  } catch (error) {
+    console.error('Error saving exercise variation:', error);
+    setVariationHint('Could not save the variation. Please try again.');
+  }
+}
+
+if (addExerciseVariationButton && variationAddRow) {
+  addExerciseVariationButton.addEventListener('click', () => {
+    if (getCurrentExerciseId()) setVariationAddOpen(true);
+  });
+  document.getElementById('saveVariationBtn').addEventListener('click', saveNewVariation);
+  document.getElementById('cancelVariationBtn').addEventListener('click', () => setVariationAddOpen(false));
+  newVariationInput.addEventListener('input', () => {
+    newVariationInput.classList.remove('input-invalid');
+    setVariationHint('');
+  });
+  newVariationInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); saveNewVariation(); }
+    if (event.key === 'Escape') setVariationAddOpen(false);
   });
 }
 
@@ -1819,7 +1913,8 @@ if (removeExerciseVariationButton) {
   removeExerciseVariationButton.addEventListener('click', async () => {
     const exerciseId = getCurrentExerciseId();
     if (!exerciseId || !currentVariation) return;
-    if (!confirm(`Remove the variation "${currentVariation}" and its volume mappings?`)) return;
+    setVariationHint('');
+    if (!(await confirmInPlace(removeExerciseVariationButton, { question: `Remove ${currentVariation}?` }))) return;
 
     captureVolumeRows();
     const updatedVariations = editorVariations.filter((variation) => variation !== currentVariation);
@@ -1834,7 +1929,7 @@ if (removeExerciseVariationButton) {
       renderVolumeTracking();
     } catch (error) {
       console.error('Error removing exercise variation:', error);
-      alert('Could not remove the variation. Please try again.');
+      setVariationHint('Could not remove the variation. Please try again.');
     }
   });
 }
@@ -1874,6 +1969,15 @@ function renderVariationSelector() {
   );
   selector.value = currentVariation;
   selector.disabled = exerciseKeys.length === 0;
+  // Close an open "Add variation" box (e.g. after switching exercise)
+  const addRow = document.getElementById('variationAddRow');
+  if (addRow && !addRow.hidden) {
+    addRow.hidden = true;
+    selector.hidden = false;
+    document.getElementById('variationActions').hidden = false;
+  }
+  const hint = document.getElementById('variationHint');
+  if (hint) hint.hidden = true;
   updateVariationButtons();
 }
 
@@ -1969,53 +2073,134 @@ function renderVolumeTracking() {
       <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
     </div>
     <p class="exo-hint">${scope}</p>
-    ${volumeMuscleGroups.length ? `
     <table class="exo-volume-table">
       <thead><tr><th>Muscle Group</th><th>Contribution</th><th></th></tr></thead>
-      <tbody id="volumeMappingRows">${volumeMuscleGroups.map((group) => buildVolumeRowHtml(group, weights[group] || 0)).join('')}</tbody>
-    </table>` : '<p class="exo-hint">No muscle groups yet. Use "Add muscle group" to create one.</p>'}
+      <tbody id="volumeMappingRows">${volumeMuscleGroups.length
+        ? volumeMuscleGroups.map((group) => buildVolumeRowHtml(group, weights[group] || 0)).join('')
+        : '<tr class="volume-empty-row"><td colspan="3" class="exo-hint">No muscle groups yet. Use "Add muscle group" to create one.</td></tr>'}</tbody>
+    </table>
     <div class="exo-info">
       <strong>About muscle group contributions</strong><br>
       Effective volume = completed sets × contribution. A contribution of 1.0 is a primary target and counts as direct sets; lower values are secondary muscles that assist the movement.
     </div>
   `;
 
-  document.getElementById('addVolumeMappingBtn').addEventListener('click', async () => {
-    const name = (prompt('New muscle group name:') || '').trim();
-    if (!name) return;
-    if (volumeMuscleGroups.some((group) => group.toLowerCase() === name.toLowerCase())) {
-      alert(`${name} already exists.`);
-      return;
+  const body = document.getElementById('volumeMappingRows');
+  const addButton = document.getElementById('addVolumeMappingBtn');
+
+  // "Add muscle group" adds an editable row at the bottom of the table.
+  addButton.addEventListener('click', () => {
+    if (body.querySelector('.volume-new-row')) return body.querySelector('.volume-new-input').focus();
+    body.querySelector('.volume-empty-row')?.remove();
+    body.insertAdjacentHTML('beforeend', `
+      <tr class="volume-new-row">
+        <td><input type="text" class="volume-new-input form-control form-control-sm" placeholder="New group…" maxlength="40" aria-label="New muscle group name"></td>
+        <td></td>
+        <td class="volume-new-actions">
+          <button type="button" class="exo-btn exo-btn-sm exo-btn-primary volume-new-save" aria-label="Add muscle group">✓</button>
+          <button type="button" class="exo-btn exo-btn-sm volume-new-cancel" aria-label="Cancel">×</button>
+        </td>
+      </tr>
+      <tr class="volume-new-hint-row" hidden><td colspan="3"><div class="field-hint field-hint-error" role="alert"></div></td></tr>`);
+    addButton.disabled = true;
+    body.querySelector('.volume-new-input').focus();
+  });
+
+  const showNewRowHint = (message) => {
+    const hintRow = body.querySelector('.volume-new-hint-row');
+    hintRow.querySelector('.field-hint').textContent = message;
+    hintRow.hidden = !message;
+    body.querySelector('.volume-new-input').classList.toggle('input-invalid', Boolean(message));
+  };
+
+  const saveNewGroup = async () => {
+    const input = body.querySelector('.volume-new-input');
+    const name = input.value.trim();
+    if (!name) return input.focus();
+    const existing = volumeMuscleGroups.find((group) => group.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      showNewRowHint(`${existing} already exists`);
+      return input.focus();
     }
     captureVolumeRows();
     volumeMuscleGroups.push(name);
     try {
       await saveVolumeGroups();
+      renderVolumeTracking();
     } catch (error) {
       volumeMuscleGroups.pop();
-      alert('Could not save the muscle group: ' + error.message);
+      showNewRowHint('Could not save the muscle group: ' + error.message);
     }
-    renderVolumeTracking();
-  });
+  };
 
-  const body = document.getElementById('volumeMappingRows');
-  if (!body) return;
-  body.addEventListener('click', async (event) => {
-    const deleteButton = event.target.closest('.volume-delete-btn');
-    if (!deleteButton) return;
-    const group = deleteButton.closest('.volume-mapping-row').dataset.group;
-    if (!confirm(`Remove "${group}" from your muscle group list? It will no longer appear for any exercise or in volume targets.`)) return;
+  // × on a row turns it into a warning strip, since removing a group affects every exercise.
+  const askRemoveGroup = (row) => {
+    body.querySelectorAll('.volume-confirm-row').forEach((other) => other.remove());
+    body.querySelectorAll('.volume-row-removing').forEach((other) => other.classList.remove('volume-row-removing'));
+    const group = row.dataset.group;
+    row.classList.add('volume-row-removing');
+    row.insertAdjacentHTML('afterend', `
+      <tr class="volume-confirm-row"><td colspan="3">
+        <div class="row-warning" role="alertdialog" aria-label="Remove ${escapeExerciseHtml(group)}">
+          <div class="row-warning-text">
+            <strong>Remove ${escapeExerciseHtml(group)} everywhere?</strong>
+            <span>It's also removed from your other exercises and volume targets.</span>
+            <span class="field-hint field-hint-error" hidden></span>
+          </div>
+          <div class="row-warning-actions">
+            <button type="button" class="exo-btn exo-btn-sm volume-keep-btn">Keep</button>
+            <button type="button" class="exo-btn exo-btn-sm exo-btn-danger volume-remove-confirm-btn">Remove</button>
+          </div>
+        </div>
+      </td></tr>`);
+    row.nextElementSibling.querySelector('.volume-keep-btn').focus();
+  };
+
+  const removeGroup = async (confirmRow) => {
+    const row = confirmRow.previousElementSibling;
+    const group = row.dataset.group;
     captureVolumeRows();
-    const previous = volumeMuscleGroups;
+    const previousGroups = volumeMuscleGroups;
+    const previousMappings = editorVolumeMappings;
     volumeMuscleGroups = volumeMuscleGroups.filter((name) => name !== group);
     editorVolumeMappings = editorVolumeMappings.filter((mapping) => mapping.muscleGroup !== group);
     try {
       await saveVolumeGroups();
+      renderVolumeTracking();
     } catch (error) {
-      volumeMuscleGroups = previous;
-      alert('Could not remove the muscle group: ' + error.message);
+      volumeMuscleGroups = previousGroups;
+      editorVolumeMappings = previousMappings;
+      const hint = confirmRow.querySelector('.field-hint');
+      hint.textContent = 'Could not remove it: ' + error.message;
+      hint.hidden = false;
     }
-    renderVolumeTracking();
+  };
+
+  const closeRemoveWarning = () => {
+    body.querySelectorAll('.volume-confirm-row').forEach((other) => other.remove());
+    const row = body.querySelector('.volume-row-removing');
+    row?.classList.remove('volume-row-removing');
+    row?.querySelector('.volume-delete-btn')?.focus();
+  };
+
+  body.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target.closest('.volume-new-save')) return saveNewGroup();
+    if (target.closest('.volume-new-cancel')) { captureVolumeRows(); return renderVolumeTracking(); }
+    if (target.closest('.volume-delete-btn')) return askRemoveGroup(target.closest('.volume-mapping-row'));
+    if (target.closest('.volume-keep-btn')) return closeRemoveWarning();
+    if (target.closest('.volume-remove-confirm-btn')) return removeGroup(target.closest('.volume-confirm-row'));
+  });
+  body.addEventListener('input', (event) => {
+    if (event.target.classList.contains('volume-new-input')) showNewRowHint('');
+  });
+  body.addEventListener('keydown', (event) => {
+    if (event.target.classList.contains('volume-new-input')) {
+      if (event.key === 'Enter') { event.preventDefault(); saveNewGroup(); }
+      if (event.key === 'Escape') { captureVolumeRows(); renderVolumeTracking(); }
+    } else if (event.key === 'Escape' && event.target.closest('.volume-confirm-row')) {
+      closeRemoveWarning();
+    }
   });
 }
 
@@ -2060,7 +2245,7 @@ function saveexo() {
   captureVolumeRows();
   const name = document.getElementById("exercise_name").value.trim();
   if (!name) {
-    alert('Exercise name is required.');
+    showNotice('Exercise name is required.', 'error');
     return;
   }
 
@@ -2068,7 +2253,7 @@ function saveexo() {
   for (const mapping of editorVolumeMappings) {
     const key = `${mapping.variation}\u0000${mapping.muscleGroup}`;
     if (seen.has(key)) {
-      alert(`${mapping.muscleGroup} is mapped more than once${mapping.variation ? ` for "${mapping.variation}"` : ' by default'}.`);
+      showNotice(`${mapping.muscleGroup} is mapped more than once${mapping.variation ? ` for "${mapping.variation}"` : ' by default'}.`, 'error');
       return;
     }
     seen.add(key);
@@ -2094,10 +2279,10 @@ function saveexo() {
 
   persistExerciseUpdates(exerciseId, updatedData)
     .then(() => {
-      alert("Exercise updated successfully!");
+      showNotice("Exercise updated successfully!", 'success');
       renderExerciseSelector();
     })
-    .catch(error => alert("Error updating exercise: " + error.message));
+    .catch(error => showNotice("Error updating exercise: " + error.message, 'error'));
 }
 
 function stepExercise(direction) {
@@ -2112,14 +2297,15 @@ document.getElementById('prevExerciseBtn')?.addEventListener('click', () => step
 document.getElementById('nextExerciseBtn')?.addEventListener('click', () => stepExercise(1));
 
 // Delete the current exercise.
-function deleteexo() {
+async function deleteexo(event) {
   const exerciseId = getCurrentExerciseId();
   if (!exerciseId) return;
-  if (!confirm("Are you sure you want to delete this exercise?")) return;
+  const name = exerciseDataMap[exerciseId]?.name;
+  if (!(await confirmInPlace(event.currentTarget, { question: name ? `Delete ${name}?` : 'Delete exercise?' }))) return;
 
   database.ref(getExerciseDataPath(exerciseId)).remove()
     .then(() => {
-      alert("Exercise deleted successfully!");
+      showNotice("Exercise deleted successfully!", 'success');
       const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, currentExerciseCategory);
       if (bucket) delete bucket[exerciseId];
       delete exerciseMetadataById[exerciseId];
@@ -2129,7 +2315,7 @@ function deleteexo() {
       renderExerciseSelector();
       displayExercise();
     })
-    .catch(error => alert("Error deleting exercise: " + error.message));
+    .catch(error => showNotice("Error deleting exercise: " + error.message, 'error'));
 }
 
 // Optionally, the 'Exercise Editor' button can refresh the current view.
@@ -2151,8 +2337,18 @@ function alignExerciseColumns() {
     widest = Math.max(widest, Math.ceil(col.getBoundingClientRect().width));
     col.style.width = '';
   });
-  exerciseList.classList.toggle('compact-volume', !showWeightMoved);
+  exerciseList.classList.toggle('compact-volume', !(showWeightMoved && showSetsRepsCounter));
+  exerciseList.classList.toggle('no-volume-details', !showWeightMoved && !showSetsRepsCounter);
   exerciseList.style.setProperty('--sets-w', widest ? ('' + widest + 'px') : '');
+
+  // All-sets mode: extra set lines start with an empty spacer as wide as the first line's
+  // variation picker + Add set, so their inputs sit under set 1's
+  const firstCounter = exerciseList.querySelector('.wk-row:not(.wk-extra-set) .wk-sets .set-counter');
+  if (firstCounter) {
+    const setsLeft = firstCounter.closest('.wk-sets').getBoundingClientRect().left;
+    const lead = Math.max(Math.round(firstCounter.getBoundingClientRect().left - setsLeft - 6), 0);
+    exerciseList.style.setProperty('--set-lead-w', lead + 'px');
+  }
 }
 
 // Render the exercise list dynamically, including intensity note field
@@ -2188,7 +2384,7 @@ function renderExerciseList() {
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
     const volumeLabel = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
-    const volumeDetailsHtml = showSetsReps ? `<span class="volume-details">${volumeLabel || 'No sets yet'}</span>` : '<span class="volume-details"></span>';
+    const volumeDetailsHtml = `<span class="volume-details">${volumeLabel}</span>`;
     const variations = normalizeExerciseVariations(exerciseMetadataById[exercise.id]?.variations ?? exercise.variations);
     const variationButtonHtml = variations.length
       ? `<div class="variation-picker"><button type="button" class="btn btn-sm btn-outline-secondary variation-btn" data-index="${index}" aria-label="Choose variation for ${escapeExerciseHtml(exercise.name)}" title="Variation"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/></svg></button><div class="variation-menu hidden">${['', ...variations].map((variation) => `<button type="button" class="variation-option${(exercise.variation || '') === variation ? ' active' : ''}" data-index="${index}" data-variation="${escapeExerciseHtml(variation)}">${variation ? escapeExerciseHtml(variation) : 'Default (none)'}</button>`).join('')}</div></div>`
@@ -2198,8 +2394,29 @@ function renderExerciseList() {
     const currentSet = setsList[activeSetIndex] || { reps: '', weight: '', note: '', custom: '' };
     const setAttrs = `data-index="${index}" data-set-index="${activeSetIndex}"`;
     const customPlaceholder = exercise.customLabel || 'Custom';
+    const showAllSets = setsDisplayMode === 'all' && showSetsReps;
 
-    const setControlsHtml = showSetsReps ? `
+    // All-sets mode: the first set sits in the exercise row exactly like one-at-a-time mode
+    // (number in place of the arrows); each extra set adds one line with the same columns.
+    const allSetInputsHtml = (set, setIndex) => {
+      const attrs = `data-index="${index}" data-set-index="${setIndex}"`;
+      return `
+      <span class="set-counter">${setIndex + 1}</span>
+      <input type="number" class="form-control form-control-sm set-input set-reps-input" ${attrs} value="${set.reps || ''}" placeholder="Reps" aria-label="Set ${setIndex + 1} reps">
+      ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${attrs} value="${set.weight || ''}" placeholder="Weight" aria-label="Set ${setIndex + 1} weight">` : ''}
+      ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${attrs} value="${set.custom || ''}" placeholder="${customPlaceholder}" aria-label="Set ${setIndex + 1} ${customPlaceholder}">` : ''}
+      ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${attrs} value="${set.note || ''}" placeholder="Set notes" aria-label="Set ${setIndex + 1} notes">` : ''}
+      <button type="button" class="btn btn-sm btn-outline-danger remove-set-btn" ${attrs} aria-label="Remove set ${setIndex + 1}">×</button>`;
+    };
+    const extraSetRowsHtml = showAllSets ? setsList.slice(1).map((set, offset) => `
+    <div class="wk-row wk-extra-set">
+      <span class="wk-name"></span>
+      <div class="wk-sets"><span class="wk-set-lead" aria-hidden="true"></span>${allSetInputsHtml(set, offset + 1)}</div>
+    </div>`).join('') : '';
+
+    const setControlsHtml = showAllSets
+      ? `<button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>${allSetInputsHtml(setsList[0] || {}, 0)}`
+      : showSetsReps ? `
       <button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>
       <button type="button" class="btn btn-sm btn-outline-secondary set-up-btn" data-index="${index}" ${activeSetIndex < totalSets - 1 ? '' : 'disabled'}>▲</button>
       <span class="set-counter" data-index="${index}">${activeSetIndex + 1}/${totalSets}</span>
@@ -2219,6 +2436,7 @@ function renderExerciseList() {
       <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise notes" data-index="${index}" value="${exercise.note || ''}">
       <button type="button" class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
     </div>
+    ${extraSetRowsHtml}
     `;
     exerciseList.appendChild(exerciseDiv);
   });
@@ -2245,11 +2463,12 @@ function renderExerciseList() {
 }
 
 function getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight) {
-  if (!showSetsReps) return '';
+  if (!showSetsReps || (!showSetsRepsCounter && !showWeightMoved)) return '';
   if (totalSets <= 0) return 'No sets yet';
-  return showWeightMoved
-    ? `${totalSets} sets • ${totalReps} reps • ${totalWeight} kg moved`
-    : `${totalSets} sets • ${totalReps} reps`;
+  const parts = [];
+  if (showSetsRepsCounter) parts.push(`${totalSets} sets • ${totalReps} reps`);
+  if (showWeightMoved) parts.push(`${totalWeight} kg moved`);
+  return parts.join(' • ');
 }
 
 setupDraftListeners();
@@ -2385,7 +2604,7 @@ function setupDraftListeners() {
 // Save workout to Firebase
 saveWorkoutBtn.addEventListener('click', async () => {
   if (selectedExercises.length === 0) {
-    alert('Please add some exercises before saving!');
+    showNotice('Please add some exercises before saving!', 'error');
     return;
   }
 
@@ -2421,9 +2640,9 @@ saveWorkoutBtn.addEventListener('click', async () => {
     renderExerciseList();
     resetBtn.click();
     checkLastWorkoutResult();
-    alert('Workout saved successfully!');
+    showNotice('Workout saved successfully!', 'success');
   } catch (error) {
-    alert(error.message);
+    showNotice(error.message, 'error');
   }
 });
 
@@ -2526,6 +2745,10 @@ function addSetToExercise(exerciseIndex) {
 
   saveWorkoutDraft();
   renderExerciseList();
+  if (setsDisplayMode === 'all') {
+    exerciseList.querySelectorAll('.exercise-item')[index]
+      ?.querySelectorAll('.set-reps-input')[exercise.setsList.length - 1]?.focus();
+  }
 }
 
 function removeSetFromExercise(exerciseIndex, setIndex) {
@@ -2846,12 +3069,12 @@ async function savelastworkoutresult() {
   const result = input.value.trim();
 
   if (!result) {
-    alert('Please enter how you felt!');
+    showNotice('Please enter how you felt!', 'error');
     return;
   }
 
   if (!workoutKey) {
-    alert('There is no recent workout to update.');
+    showNotice('There is no recent workout to update.', 'error');
     return;
   }
 
@@ -2860,7 +3083,7 @@ async function savelastworkoutresult() {
     document.getElementById('resultsection')?.classList.add('hidden');
   } catch (error) {
     console.error('Error saving result:', error);
-    alert('Could not save how you felt. Please try again.');
+    showNotice('Could not save how you felt. Please try again.', 'error');
   }
 }
 
@@ -2931,7 +3154,6 @@ async function bootstrapPrivateApp() {
     await loadWorkoutBuilderSettings();
     await loadExerciseCategories();
     await loadExercises();
-    await loadFocusAreas();
     loadWorkouts();
     loadCategories();
     await loadWorkoutDraft();

@@ -697,24 +697,14 @@ function renderCalendarMonths(weeks, year, firstMonth) {
     }
     months.push(`<table class="calendar-month">${monthColumns}${rows}</table>`);
   }
-  // Normal: up to 6 months per row in as few rows as possible, balanced with any extra months
-  // in the first rows (7 = 4+3, 11 = 6+5). Writable days: full rows of 3, leftovers last (7 = 3+3+1).
-  const rowSizes = [];
-  if (calendarWritableDays) {
-    for (let left = months.length; left > 0; left -= 3) rowSizes.push(Math.min(3, left));
-  } else {
-    const rowCount = Math.ceil(months.length / 6);
-    for (let row = 0; row < rowCount; row++) {
-      rowSizes.push(Math.floor(months.length / rowCount) + (row < months.length % rowCount ? 1 : 0));
-    }
-  }
-  let monthRows = '';
-  let start = 0;
-  rowSizes.forEach((size) => {
-    monthRows += `<div class="calendar-months-row">${months.slice(start, start + size).join('')}</div>`;
-    start += size;
-  });
-  return `<div class="calendar-months">${monthRows}</div>`;
+  // All months go in one wrapping row, capped by CSS at this many per row:
+  // normal = up to 6, in as few rows as possible (7 = 4+3, 11 = 6+5); writable days = 3.
+  // On narrower screens the months then wrap evenly (5+5+2) instead of each row
+  // splitting on its own (5+1, 5+1).
+  const perRow = calendarWritableDays
+    ? Math.min(3, months.length)
+    : Math.ceil(months.length / Math.ceil(months.length / 6));
+  return `<div class="calendar-months"><div class="calendar-months-row" style="--months-per-row:${perRow}">${months.join('')}</div></div>`;
 }
 
 async function createCalendar(year = new Date().getFullYear()) {

@@ -211,6 +211,7 @@ const showSetNotesCheckbox = document.getElementById('showSetNotesSetting');
 const showSetsRepsCounterCheckbox = document.getElementById('showSetsRepsCounterSetting');
 const setsDisplayCheckbox = document.getElementById('setsDisplaySetting');
 const fitBuilderWidthCheckbox = document.getElementById('fitBuilderWidthSetting');
+const autoStartClockCheckbox = document.getElementById('autoStartClockSetting');
 let showWeightMoved = true;
 let showWorkoutNotes = true;
 let showPostWorkoutNotes = true;
@@ -220,6 +221,8 @@ let showSetsRepsCounter = true; // the "3 sets • 30 reps" part of each exercis
 let setsDisplayMode = 'cycle';
 // true = the builder shrinks to fit its visible columns; false = it stays full width
 let fitBuilderWidth = true;
+// true = adding an exercise starts the clock; false = only the "Start clock" button does
+let autoStartClock = true;
 
 function applyBuilderWidthMode() {
   document.getElementById('workoutBuilderSection')?.classList.toggle('builder-full-width', !fitBuilderWidth);
@@ -410,6 +413,20 @@ if (setsDisplayCheckbox) {
       setsDisplayCheckbox.checked = previousValue === 'all';
       renderExerciseList();
       console.error('Error saving setsDisplay setting:', error);
+    }
+  });
+}
+
+if (autoStartClockCheckbox) {
+  autoStartClockCheckbox.addEventListener('change', async () => {
+    const previousValue = autoStartClock;
+    autoStartClock = autoStartClockCheckbox.checked;
+    try {
+      await database.ref('settings/workoutBuilder').update({ autoStartClock });
+    } catch (error) {
+      autoStartClock = previousValue;
+      autoStartClockCheckbox.checked = previousValue;
+      console.error('Error saving autoStartClock setting:', error);
     }
   });
 }
@@ -1007,7 +1024,7 @@ addExerciseBtn.addEventListener('click', () => {
 
     renderExerciseList();
     saveWorkoutDraft();
-    beginClock();
+    if (autoStartClock) beginClock();
 });
 
 let dropdownContent = []; // Global variable to store the generated dropdown content
@@ -1052,6 +1069,8 @@ async function loadWorkoutBuilderSettings() {
     setsDisplayMode = settings.setsDisplay === 'all' ? 'all' : 'cycle';
     fitBuilderWidth = settings.fitBuilderWidth !== false;
     applyBuilderWidthMode();
+    autoStartClock = settings.autoStartClock !== false;
+    if (autoStartClockCheckbox) autoStartClockCheckbox.checked = autoStartClock;
     if (setsDisplayCheckbox) setsDisplayCheckbox.checked = setsDisplayMode === 'all';
     if (showWorkoutNotesCheckbox) showWorkoutNotesCheckbox.checked = showWorkoutNotes;
     if (showPostWorkoutNotesCheckbox) showPostWorkoutNotesCheckbox.checked = showPostWorkoutNotes;

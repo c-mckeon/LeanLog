@@ -657,6 +657,45 @@ function saveVolumeTargets() {
   });
 }
 
+// Copy the targets on screen to every later month: each month up to December next year
+// (the end of the month list) plus any later month that already has targets. Saves straight away.
+function applyTargetsToFutureMonths() {
+  if (!window.database) return;
+  captureTargetInputs();
+  const monthKey = currentTargetMonthKey || getVolumeTargetMonthKey(currentVolumeYear, currentVolumeMonth);
+  const targets = monthlyTargets[monthKey] || {};
+  const status = document.getElementById('targetsSaveStatus');
+
+  // Month keys are YYYY-MM, so plain string comparison orders them by date
+  const lastListedKey = getVolumeTargetMonthKey(currentVolumeYear + 1, 11);
+  const laterKeys = new Set(Object.keys(monthlyTargets).filter(key => key > monthKey));
+  let [year, month] = monthKey.split('-').map(Number);
+  for (;;) {
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+    const key = getVolumeTargetMonthKey(year, month - 1);
+    if (key > lastListedKey) break;
+    laterKeys.add(key);
+  }
+  if (!laterKeys.size) {
+    if (status) status.textContent = 'No later months';
+    return;
+  }
+
+  const sortedKeys = [...laterKeys].sort();
+  const range = `${formatTargetMonthLabel(sortedKeys[0])} – ${formatTargetMonthLabel(sortedKeys[sortedKeys.length - 1])}`;
+  if (!confirm(`Apply these targets to ${range}? This replaces any targets already set for those months.`)) return;
+
+  sortedKeys.forEach(key => { monthlyTargets[key] = { ...targets }; });
+  window.database.ref('volumeTargets').set(monthlyTargets).then(() => {
+    if (status) status.textContent = `Saved and applied to ${sortedKeys.length} later months`;
+    if (volumeArea && !volumeArea.classList.contains('hidden')) loadVolumeData();
+  }).catch(error => {
+    console.error('Error applying targets to future months', error);
+    if (status) status.textContent = 'Could not save';
+  });
+}
+
 function renderMuscleMatrix() {
   if (!muscleMatrixBody) return;
   muscleMatrixBody.innerHTML = '';
@@ -831,6 +870,11 @@ if (saveTargetsButton) {
   saveTargetsButton.addEventListener('click', saveVolumeTargets);
 }
 
+const applyTargetsForwardButton = document.getElementById('applyTargetsForwardBtn');
+if (applyTargetsForwardButton) {
+  applyTargetsForwardButton.addEventListener('click', applyTargetsToFutureMonths);
+}
+
 if (targetMonthSelect) {
   targetMonthSelect.addEventListener('change', () => {
     currentTargetMonthKey = targetMonthSelect.value;
@@ -858,7 +902,6 @@ function initVolumeEvents() {
   if (volumeToggleButton && volumeArea) {
     volumeToggleButton.addEventListener('click', () => {
       volumeArea.classList.toggle('hidden');
-      volumeToggleButton.textContent = volumeArea.classList.contains('hidden') ? 'Show Volume' : 'Hide Volume';
       if (!volumeArea.classList.contains('hidden')) {
         loadVolumeData();
       }

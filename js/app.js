@@ -272,11 +272,11 @@ function renderExercisePickerOptions() {
 }
 
 const sectionVisibilityTargets = {
-  addEdit: ['#addEditSection'],
-  workouts: ['#showWorkoutsSection'],
-  calendar: ['#calendarSection'],
-  progress: ['#progressdiv'],
-  volume: ['#showvolume']
+  addEdit: ['#addEditSection', '#toggleFormBtn'],
+  workouts: ['#showWorkoutsSection', '#showWorkoutsBtn'],
+  calendar: ['#calendarSection', '#showCalendarBtn'],
+  progress: ['#progressdiv', '#toggleprogressBtn'],
+  volume: ['#showvolume', '#toggleVolumeBtn']
 };
 
 function setSectionIncluded(sectionName, included) {
@@ -784,6 +784,138 @@ saveNewExerciseBtn.addEventListener('click', async () => {
       alert(error.message);
     }
 });
+
+//-////////////////////////////////////////////////////////////////////// Add from library
+// "From library" picks an exercise from window.EXERCISE_LIBRARY (js/exerciseLibrary.js) and
+// lets the user tick any of its variations, or none. "Create your own" is the original form.
+const addFromLibraryBtn = document.getElementById('addFromLibraryBtn');
+const addCustomBtn = document.getElementById('addCustomBtn');
+const libraryAddPane = document.getElementById('libraryAddPane');
+const addExerciseForm = document.getElementById('addExerciseForm');
+const librarySearch = document.getElementById('librarySearch');
+const libraryList = document.getElementById('libraryList');
+const librarySelection = document.getElementById('librarySelection');
+const libraryVariations = document.getElementById('libraryVariations');
+const addLibraryExerciseBtn = document.getElementById('addLibraryExerciseBtn');
+let selectedLibraryExercise = null;
+
+function setAddExerciseMode(mode) {
+  const fromLibrary = mode === 'library';
+  libraryAddPane.hidden = !fromLibrary;
+  addExerciseForm.hidden = fromLibrary;
+  addFromLibraryBtn.classList.toggle('exo-btn-active', fromLibrary);
+  addCustomBtn.classList.toggle('exo-btn-active', !fromLibrary);
+  addFromLibraryBtn.setAttribute('aria-pressed', String(fromLibrary));
+  addCustomBtn.setAttribute('aria-pressed', String(!fromLibrary));
+  if (fromLibrary) renderLibraryList();
+}
+
+// Names the user already has, lower-cased, so library entries can show as "Added"
+function getExistingExerciseNames() {
+  const names = new Set();
+  Object.values(exerciseCatalogByCategory || {}).forEach((categoryExercises) => {
+    Object.values(categoryExercises || {}).forEach((exercise) => {
+      if (typeof exercise?.name === 'string') names.add(exercise.name.trim().toLowerCase());
+    });
+  });
+  return names;
+}
+
+function renderLibraryList() {
+  if (!libraryList) return;
+  const library = window.EXERCISE_LIBRARY || [];
+  const query = (librarySearch?.value || '').trim().toLowerCase();
+  const existing = getExistingExerciseNames();
+  // A search also matches variation names, e.g. "hammer" finds Bicep Curl
+  const matches = library.filter((entry) => !query
+    || entry.name.toLowerCase().includes(query)
+    || Object.values(entry.variations || {}).flat().some((variation) => variation.toLowerCase().includes(query)));
+
+  if (!matches.length) {
+    libraryList.innerHTML = '<p class="exo-hint library-empty">No matches. Try "Create your own" instead.</p>';
+    return;
+  }
+
+  const byCategory = new Map();
+  matches.forEach((entry) => {
+    if (!byCategory.has(entry.category)) byCategory.set(entry.category, []);
+    byCategory.get(entry.category).push(entry);
+  });
+
+  libraryList.innerHTML = [...byCategory].map(([category, entries]) => `
+    <div class="library-group">
+      <div class="library-group-title">${escapeExerciseHtml(category)}</div>
+      ${entries.map((entry) => {
+        const added = existing.has(entry.name.toLowerCase());
+        const selected = selectedLibraryExercise?.name === entry.name;
+        return `<button type="button" class="library-item${selected ? ' selected' : ''}" role="option" aria-selected="${selected}"
+          data-library-name="${escapeExerciseHtml(entry.name)}" ${added ? 'disabled' : ''}>
+          ${escapeExerciseHtml(entry.name)}${added ? ' <span class="library-added">Added</span>' : ''}
+        </button>`;
+      }).join('')}
+    </div>`).join('');
+}
+
+function selectLibraryExercise(name) {
+  selectedLibraryExercise = (window.EXERCISE_LIBRARY || []).find((entry) => entry.name === name) || null;
+  librarySelection.hidden = !selectedLibraryExercise;
+  renderLibraryList();
+  if (!selectedLibraryExercise) return;
+
+  document.getElementById('librarySelectedName').textContent = selectedLibraryExercise.name;
+  document.getElementById('librarySelectedCategory').textContent = selectedLibraryExercise.category;
+  const groups = Object.entries(selectedLibraryExercise.variations || {}).filter(([, values]) => values.length);
+  libraryVariations.innerHTML = groups.length
+    ? groups.map(([group, values]) => `
+      <div class="library-variation-group">
+        <span class="library-variation-type">${escapeExerciseHtml(group)}</span>
+        ${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}"> ${escapeExerciseHtml(value)}</label>`).join('')}
+      </div>`).join('')
+    : '<p class="exo-hint">No common variations for this one.</p>';
+}
+
+async function addSelectedLibraryExercise() {
+  if (!selectedLibraryExercise) return;
+  const { name, category } = selectedLibraryExercise;
+  const variations = [...libraryVariations.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+
+  try {
+    addLibraryExerciseBtn.disabled = true;
+    // Bring back the library's category if the user removed it
+    if (!exerciseCategories.includes(category)) {
+      exerciseCategories.push(category);
+      await saveExerciseCategories();
+      renderExerciseCategoryOptions();
+    }
+    await postToWorkoutApi('/api/exercises', { name, category, variations, focusAreas: [], fields: ['sets', 'reps', 'weight'] });
+    selectedLibraryExercise = null;
+    librarySelection.hidden = true;
+    if (librarySearch) librarySearch.value = '';
+    await loadExercises();
+    if (window.refreshTrackedExercises) window.refreshTrackedExercises();
+    collapseAddEditSection();
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    addLibraryExerciseBtn.disabled = false;
+  }
+}
+
+if (libraryAddPane && addExerciseForm) {
+  addFromLibraryBtn.addEventListener('click', () => setAddExerciseMode('library'));
+  addCustomBtn.addEventListener('click', () => setAddExerciseMode('custom'));
+  librarySearch?.addEventListener('input', renderLibraryList);
+  libraryList.addEventListener('click', (event) => {
+    const item = event.target.closest('.library-item');
+    if (item && !item.disabled) selectLibraryExercise(item.dataset.libraryName);
+  });
+  addLibraryExerciseBtn.addEventListener('click', addSelectedLibraryExercise);
+  // Refresh "Added" markers each time the form opens
+  toggleAddExerciseFormBtn?.addEventListener('click', () => {
+    if (!addExerciseFormWrapper.classList.contains('hidden') && !libraryAddPane.hidden) renderLibraryList();
+  });
+}
+//////////////////////////////////////////////////////////////////////// Add from library
 
 // Prevent duplicate exercise addition
 addExerciseBtn.addEventListener('click', () => {
@@ -2504,7 +2636,6 @@ function collapseAddEditSection() {
 toggleFormBtn.addEventListener("click", () => {
   const isOpening = addEditToolbarButtons.classList.contains("hidden");
   addEditToolbarButtons.classList.toggle("hidden", !isOpening);
-  toggleFormBtn.textContent = isOpening ? "Hide" : "Add and Edit";
 
   if (!isOpening) {
     addExerciseFormWrapper.classList.add("hidden");
@@ -2518,6 +2649,7 @@ toggleFormBtn.addEventListener("click", () => {
 workoutEditorBtn.addEventListener("click", () => {
   workoutEditorSection.classList.toggle("hidden");
   exerciseEditorSection.classList.add("hidden");
+  addExerciseFormWrapper.classList.add("hidden");
   syncAddEditToolbar();
 });
 
@@ -2525,26 +2657,26 @@ workoutEditorBtn.addEventListener("click", () => {
 exoEditorBtn.addEventListener("click", () => {
   exerciseEditorSection.classList.toggle("hidden");
   workoutEditorSection.classList.add("hidden");
+  addExerciseFormWrapper.classList.add("hidden");
   syncAddEditToolbar();
 });
 
+// Runs after the form's own toggle (registered earlier); opening the form closes both editors
 if (toggleAddExerciseFormBtn) {
-  toggleAddExerciseFormBtn.addEventListener("click", syncAddEditToolbar);
-}
-const hideAddExerciseFormBtn = document.getElementById("hideAddExerciseFormBtn");
-if (hideAddExerciseFormBtn) {
-  hideAddExerciseFormBtn.addEventListener("click", () => {
-    addExerciseFormWrapper.classList.add("hidden");
+  toggleAddExerciseFormBtn.addEventListener("click", () => {
+    if (!addExerciseFormWrapper.classList.contains("hidden")) {
+      workoutEditorSection.classList.add("hidden");
+      exerciseEditorSection.classList.add("hidden");
+    }
     syncAddEditToolbar();
   });
 }
-
 //////////////////////////////////////////////////////////////////////// Add and edit section functionality
 
 //-////////////////////////////////////////////////////////////////////// Past workouts list section
 
 // Select the button element for workouts
-const workoutButton = document.querySelector('#showworkouts .click');
+const workoutButton = document.getElementById('showWorkoutsBtn');
 
 
 // Ensure the saved workouts list is hidden initially
@@ -2647,20 +2779,18 @@ if (workoutMonthSelect) {
   workoutMonthSelect.addEventListener('change', renderSavedWorkouts);
 }
 
-// Toggle workouts (and the filter) when the "Show workouts" button is clicked
+// Toggle workouts (and the filter) when the "Workouts" tab is clicked
 workoutButton.addEventListener('click', () => {
   const workoutYearElement = document.getElementById('workout-year-filter');
   const workoutMonthElement = document.getElementById('workout-month-filter');
-  if (workoutButton.textContent === 'Show workouts') {
+  if (savedWorkoutList.classList.contains('hidden')) {
     renderSavedWorkouts(); // Populate the workouts
     savedWorkoutList.classList.remove('hidden'); // Make the workouts list visible
-    workoutButton.textContent = 'Hide workouts'; // Change button text
     if (workoutYearElement) workoutYearElement.style.display = 'inline';
     if (workoutMonthElement) workoutMonthElement.style.display = 'inline';
   } else {
     savedWorkoutList.innerHTML = ''; // Clear the workouts content
     savedWorkoutList.classList.add('hidden'); // Hide the workouts list
-    workoutButton.textContent = 'Show workouts'; // Change button text back
     if (workoutYearElement) workoutYearElement.style.display = 'none';
     if (workoutMonthElement) workoutMonthElement.style.display = 'none';
   }

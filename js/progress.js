@@ -595,7 +595,6 @@ function loadProgressData() {
 if (progressToggleButton && progressArea) {
   progressToggleButton.addEventListener('click', () => {
     progressArea.classList.toggle('hidden');
-    progressToggleButton.textContent = progressArea.classList.contains('hidden') ? 'Show progress' : 'Hide progress';
     if (!progressArea.classList.contains('hidden')) {
       loadExerciseOptions().then(syncTrackedExercises).then(() => {
         loadProgressData();

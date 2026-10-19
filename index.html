@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-DAL5IyXk.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-CpeIkpdJ.css">
 </head>
 <body>
   
@@ -43,50 +43,69 @@
       </div>
 
       <div class="settings-section-block">
-        <div class="settings-section-title">Add and Edit</div>
-        <label class="settings-checkbox-row" for="includeAddEditSetting">
+        <label class="settings-section-title settings-section-toggle" for="includeAddEditSetting" title="Include this section">
+          <span>Add and Edit</span>
           <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked>
-          <span>Include section</span>
         </label>
       </div>
 
       <div class="settings-section-block">
-        <div class="settings-section-title">Show Workouts</div>
-        <label class="settings-checkbox-row" for="includeWorkoutsSetting">
+        <label class="settings-section-title settings-section-toggle" for="includeWorkoutsSetting" title="Include this section">
+          <span>Show Workouts</span>
           <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked>
-          <span>Include section</span>
         </label>
       </div>
 
       <div class="settings-section-block">
-        <div class="settings-section-title">Calendar</div>
-        <label class="settings-checkbox-row" for="includeCalendarSetting">
+        <label class="settings-section-title settings-section-toggle" for="includeCalendarSetting" title="Include this section">
+          <span>Calendar</span>
           <input type="checkbox" id="includeCalendarSetting" data-section-setting="calendar" checked>
-          <span>Include section</span>
         </label>
-        <label class="settings-checkbox-row" for="showWholeYearSetting">
-          <input type="checkbox" id="showWholeYearSetting">
-          <span>Show full year</span>
+        <label class="settings-label" for="calendarLayoutSetting">Layout</label>
+        <select id="calendarLayoutSetting" class="form-control form-control-sm settings-select">
+          <option value="horizontal">Horizontal (months side by side)</option>
+          <option value="vertical">Vertical (weeks down)</option>
+        </select>
+        <label class="settings-checkbox-row" for="writableDaysSetting" style="margin-top: 8px;">
+          <input type="checkbox" id="writableDaysSetting">
+          <span>Writable days</span>
         </label>
-        <label class="settings-label" for="calendarStartWeekSetting" style="margin-top: 8px;">Start from week</label>
-        <input type="number" id="calendarStartWeekSetting" class="form-control form-control-sm settings-select" min="1" max="53" step="1" value="1">
+        <!-- Month layout starts from a month; week layout starts from a week -->
+        <div id="calendarStartMonthRow" class="settings-half">
+          <label class="settings-label" for="calendarStartMonthSetting" style="margin-top: 8px;">Start from month</label>
+          <select id="calendarStartMonthSetting" class="form-control form-control-sm settings-select">
+            <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+            <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+            <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+            <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+          </select>
+        </div>
+        <!-- Labels on one line, their boxes on the next. End at "Auto" runs to the week after next;
+             saved as settings/calendar/showWholeYear -->
+        <div id="calendarStartWeekRow" class="settings-pair" hidden>
+          <label class="settings-label" for="calendarStartWeekSetting">Start from week</label>
+          <label class="settings-label" for="calendarEndAtSetting">End at</label>
+          <input type="number" id="calendarStartWeekSetting" class="form-control form-control-sm settings-select" min="1" max="53" step="1" value="1">
+          <select id="calendarEndAtSetting" class="form-control form-control-sm settings-select">
+            <option value="auto">Auto</option>
+            <option value="yearEnd">Year end</option>
+          </select>
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <div class="settings-section-title">Progress</div>
-        <label class="settings-checkbox-row" for="includeProgressSetting">
+        <label class="settings-section-title settings-section-toggle" for="includeProgressSetting" title="Include this section">
+          <span>Progress</span>
           <input type="checkbox" id="includeProgressSetting" data-section-setting="progress" checked>
-          <span>Include section</span>
         </label>
         <button type="button" id="trackedExercisesToggleBtn" class="settings-link-btn" aria-expanded="false" aria-controls="trackedExercisesPanel">Select exercises to track</button>
         <div id="trackedExercisesPanel" class="tracked-exercises-panel hidden"></div>
       </div>
 
       <div class="settings-section-block">
-        <div class="settings-section-title">Volume</div>
-        <label class="settings-checkbox-row" for="includeVolumeSetting">
+        <label class="settings-section-title settings-section-toggle" for="includeVolumeSetting" title="Include this section">
+          <span>Volume</span>
           <input type="checkbox" id="includeVolumeSetting" data-section-setting="volume" checked>
-          <span>Include section</span>
         </label>
         <button type="button" id="volumeTargetsToggleBtn" class="settings-link-btn" aria-expanded="false" aria-controls="volumeTargetsPanel">Set volume targets</button>
         <div id="volumeTargetsPanel" class="tracked-exercises-panel volume-targets-panel hidden">
@@ -95,6 +114,7 @@
           <div id="targetEditorRows" style="margin-top:8px;"></div>
           <button type="button" id="addTargetGroupBtn" class="settings-link-btn">Add muscle group</button>
           <button type="button" id="saveTargetsBtn" class="exo-btn exo-btn-primary" style="margin-top:8px;">Save targets</button>
+          <button type="button" id="applyTargetsForwardBtn" class="exo-btn" style="margin-top:8px;">Apply to future months</button>
           <span id="targetsSaveStatus" class="settings-empty" style="margin-left:8px;"></span>
         </div>
       </div>
@@ -190,17 +210,27 @@
   </section>
  <hr>
 
+  <!-- Section tabs: each opens its content in the shared panel below; only one is open at a time -->
+  <nav id="sectionTabs" class="section-tabs" aria-label="Sections">
+    <button type="button" id="toggleFormBtn" class="section-tab" data-section="addEdit" aria-expanded="false">Add and Edit</button>
+    <button type="button" id="showWorkoutsBtn" class="section-tab" data-section="workouts" aria-expanded="false">Workouts</button>
+    <button type="button" id="showCalendarBtn" class="section-tab" data-section="calendar" aria-expanded="false">Calendar</button>
+    <button type="button" id="toggleprogressBtn" class="section-tab" data-section="progress" aria-expanded="false">Progress</button>
+    <button type="button" id="toggleVolumeBtn" class="section-tab" data-section="volume" aria-expanded="false">Volume</button>
+  </nav>
+  <hr class="section-tabs-separator">
+
+  <div id="sectionPanels" class="section-panels">
   <!-- Add Exercise Section -->
-  <section id="addEditSection">
+  <section id="addEditSection" class="section-panel" data-section="addEdit">
   <div class="row p-3" id="addExerciseSectiondiv">
     <!-- Add and Edit Section -->
     <div class="col-12">
         <div class="exo-toolbar">
-          <button type="button" style="min-width: 150px;" id="toggleFormBtn">Add and Edit</button>
           <span id="addEditToolbarButtons" class="exo-toolbar-group hidden">
+            <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn">Add Exercise</button>
             <button type="button" id="showeditorbtn" class="exo-btn">Workout Editor</button>
             <button type="button" id="showexoeditorbtn" class="exo-btn">Exercise Editor</button>
-            <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn exo-btn-primary">Add Exercise</button>
           </span>
           <span class="exo-toolbar-spacer"></span>
           <span id="exerciseActionButtons" class="exo-toolbar-group hidden">
@@ -213,10 +243,27 @@
             <div class="exo-add-header">
               <div>
                 <h3>Add Exercise</h3>
-                <p class="exo-hint">Create a new exercise and add it to your library.</p>
+                <p class="exo-hint">Pick one from the library or create your own.</p>
               </div>
             </div>
-            <form id="addExerciseForm" class="exo-add-form">
+            <div class="exo-add-modes" role="group" aria-label="How to add">
+              <button type="button" id="addFromLibraryBtn" class="exo-btn exo-btn-active" aria-pressed="true">From library</button>
+              <button type="button" id="addCustomBtn" class="exo-btn" aria-pressed="false">Create your own</button>
+            </div>
+
+            <!-- From library: search, pick an exercise, optionally tick variations -->
+            <div id="libraryAddPane" class="library-add">
+              <input type="search" id="librarySearch" class="form-control form-control-sm" placeholder="Search exercises" aria-label="Search the exercise library" autocomplete="off">
+              <div id="libraryList" class="library-list" role="listbox" aria-label="Exercise library"></div>
+              <div id="librarySelection" class="library-selection" hidden>
+                <div class="library-selection-title"><strong id="librarySelectedName"></strong> <span id="librarySelectedCategory" class="exo-hint"></span></div>
+                <div id="libraryVariations"></div>
+                <p class="exo-hint library-variation-hint">Variations are optional. Tick any you use, or none; you can add more later in the Exercise Editor.</p>
+                <button type="button" id="addLibraryExerciseBtn" class="exo-btn exo-btn-primary">Add exercise</button>
+              </div>
+            </div>
+
+            <form id="addExerciseForm" class="exo-add-form" hidden>
                 <div class="exo-add-field">
                   <label for="newExerciseName">Exercise Name</label>
                   <input type="text" id="newExerciseName" placeholder="Enter exercise name" required>
@@ -245,7 +292,6 @@
                 </div>
 
                 <button type="button" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">Add Exercise</button>
-                <button type="button" id="hideAddExerciseFormBtn" class="exo-btn">Hide form</button>
             </form>
           </div>
         </section> 
@@ -327,10 +373,6 @@
               </div></div>
 
           </div>
-      </div>
-
-</div>
-  <hr>
   </section>
 
   <div class="row p-3 hidden" id="chartsSection">
@@ -348,9 +390,8 @@
 
 
 
-  <section class="row p-3" id="showWorkoutsSection">
+  <section class="row p-3 section-panel" id="showWorkoutsSection" data-section="workouts">
     <div class="col-12 period-bar" id="showworkouts">
-      <button style="min-width: 150px;" class="click">Show workouts</button>
       <select id="workout-year-filter" class="period-select" aria-label="Year" style="display: none;">
         <option value="all">All years</option>
       </select>
@@ -360,12 +401,12 @@
     <div class="row p-3 hidden" id="savedWorkoutList">
       <!-- Saved workouts will appear here -->
     </div>
-    <div class="col-12"><hr></div>
   </section>
 
   <!-- JavaScript -->
   <script src="js/api-database.js" defer></script>
   <script src="js/cognito-session.js" defer></script>
+  <script src="js/exerciseLibrary.js" defer></script>
   <script src="js/app.js" defer></script>
   <script src="js/analytics.js" defer></script>
   <script src="js/progress.js" defer></script>
@@ -376,9 +417,8 @@
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 
-  <div class="row p-3" id="calendarSection">
+  <div class="row p-3 section-panel" id="calendarSection" data-section="calendar">
     <div class="col-12 period-bar" id="showcal">
-      <button style="min-width: 150px;" class="click">Show calendar</button>
       <select id="calendar-year-filter" class="period-select" aria-label="Year" style="display: none;">
         <option value="2025">2025</option>
         <option value="2026" selected>2026</option>
@@ -386,14 +426,12 @@
     </div>
     
     <div id="calendar-container" style="padding-top: 20px; display: none;"></div>
-    <div class="col-12"><hr></div>
   </div>
 
   
 
-  <div class="row p-3" id="progressdiv">
+  <div class="row p-3 section-panel" id="progressdiv" data-section="progress">
     <div class="col-12">
-      <button style="min-width: 150px;" id="toggleprogressBtn">Show progress</button>
       <div id="progressarea" class="hidden">
         <section id="Progress section" style="margin-top: 10px;">
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
@@ -423,7 +461,6 @@
           <ul id="performanceList" class="hidden" style="padding-left:20px; margin-top:10px;"></ul>
         </section>
       </div>
-      <hr>
     </div>
   </div>
 
@@ -542,9 +579,8 @@ body {
 
 
 
-  <div class="row p-3" id="showvolume">
+  <div class="row p-3 section-panel" id="showvolume" data-section="volume">
     <div class="col-12">
-      <button style="min-width: 150px;" id="toggleVolumeBtn">Show Volume</button>
       <div id="volumearea" class="hidden" style="margin-top: 10px;">
         <section id="Volume section" style="margin-top: 10px;">
           <div class="volume-header" style="display:flex; align-items:center; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
@@ -599,10 +635,11 @@ body {
           </div>
         </section>
       </div>
-      <hr>
     </div>
   </div>
+  </div><!-- /#sectionPanels -->
 
+  <script src="js/sectionTabs.js" defer></script>
 </body>
 </html>
 

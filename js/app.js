@@ -229,10 +229,52 @@ function applyBuilderWidthMode() {
   if (fitBuilderWidthCheckbox) fitBuilderWidthCheckbox.checked = fitBuilderWidth;
 }
 
+const exercisePickerSearch = document.getElementById('exercisePickerSearch');
+const exercisePickerEmpty = document.getElementById('exercisePickerEmpty');
+
 function setExercisePickerOpen(isOpen) {
   if (!exercisePickerMenu || !exercisePickerTrigger) return;
   exercisePickerMenu.hidden = !isOpen;
   exercisePickerTrigger.setAttribute('aria-expanded', String(isOpen));
+  if (exercisePickerSearch) {
+    exercisePickerSearch.value = '';
+    filterExercisePickerOptions();
+    if (isOpen) exercisePickerSearch.focus();
+  }
+}
+
+// Hides exercises that don't contain the search text, and category headings left with none
+function filterExercisePickerOptions() {
+  if (!exercisePickerOptions) return;
+  const query = (exercisePickerSearch?.value || '').trim().toLowerCase();
+  let heading = null;
+  let headingHasMatch = false;
+  let anyMatch = false;
+  const closeHeading = () => { if (heading) heading.hidden = !headingHasMatch; };
+
+  Array.from(exercisePickerOptions.children).forEach((element) => {
+    if (element.classList.contains('exercise-picker-category')) {
+      closeHeading();
+      heading = element;
+      headingHasMatch = false;
+      return;
+    }
+    const matches = !query || element.textContent.toLowerCase().includes(query);
+    element.hidden = !matches;
+    if (matches) { headingHasMatch = true; anyMatch = true; }
+  });
+  closeHeading();
+  if (exercisePickerEmpty) exercisePickerEmpty.hidden = anyMatch;
+}
+
+if (exercisePickerSearch) {
+  exercisePickerSearch.addEventListener('input', filterExercisePickerOptions);
+  // Enter picks the first match
+  exercisePickerSearch.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    Array.from(exercisePickerOptions.querySelectorAll('.exercise-picker-option')).find((option) => !option.hidden)?.click();
+  });
 }
 
 if (exercisePickerTrigger) {
@@ -282,6 +324,7 @@ function renderExercisePickerOptions() {
       exercisePickerOptions.appendChild(choice);
     });
   });
+  filterExercisePickerOptions();
 }
 
 const sectionVisibilityTargets = {
@@ -1340,9 +1383,11 @@ function buildPastExerciseHtml(exercise, index) {
 }
 
 var isNewWorkout = false;
+var pastWorkoutSaveId = "";
 
 function setNewWorkoutMode(active) {
   isNewWorkout = active;
+  if (active) pastWorkoutSaveId = ""; // each new past workout gets its own save id
   const deleteBtn = document.getElementById("deleteWorkoutBtn");
   const addWorkoutBtn = document.getElementById("addPastWorkoutBtn");
   if (deleteBtn) deleteBtn.textContent = active ? "Cancel" : "Delete workout";
@@ -1444,6 +1489,13 @@ function displayCurrentNode() {
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// "2026-10-12" → "12 Oct 2026"; anything not in that form is shown as it is
+function formatWorkoutListDate(date) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date || ''));
+  const monthName = match && MONTH_NAMES[Number(match[2]) - 1];
+  return monthName ? `${Number(match[3])} ${monthName.slice(0, 3)} ${match[1]}` : date;
+}
 
 function getWorkoutDateParts(key) {
   const [year = "", month = "", day = ""] = String(workoutsById[key]?.date || "").split("-");
@@ -1581,8 +1633,11 @@ function saveChanges() {
         showNotice("Please choose a date for the workout.", 'error');
         return;
       }
-      requestWorkoutApi("/api/workouts", "POST", updatedWorkout)
+      // Same idea as the builder: a repeated click saves the same workout, not a copy
+      pastWorkoutSaveId = pastWorkoutSaveId || (window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+      requestWorkoutApi("/api/workouts", "POST", { ...updatedWorkout, saveId: pastWorkoutSaveId })
         .then((result) => {
+          pastWorkoutSaveId = "";
           workoutsById[result.id] = result.workout;
           workoutKeys.push(result.id);
           workoutKeys.sort((a, b) =>
@@ -1590,6 +1645,7 @@ function saveChanges() {
           currentIndex = Math.max(workoutKeys.indexOf(result.id), 0);
           displayCurrentNode();
           collapseAddEditSection();
+          refreshAfterWorkoutSaved({ reloadEditor: false });
         })
         .catch(error => showNotice("Error: " + error.message, 'error'));
       return;
@@ -1603,6 +1659,7 @@ function saveChanges() {
         currentIndex = Math.max(workoutKeys.indexOf(workoutID), 0);
         renderWorkoutNav();
         collapseAddEditSection();
+        refreshAfterWorkoutSaved({ reloadEditor: false });
       })
       .catch(error => showNotice("Error: " + error.message, 'error'));
 }
@@ -1650,6 +1707,7 @@ async function deleteworkout(event) {
   database.ref(fullPath).remove()
     .then(() => {
       showNotice("Workout deleted successfully!", 'success');
+      refreshAfterWorkoutSaved({ reloadEditor: false });
       
       // Refresh local index and editor UI.
       workoutKeys.splice(currentIndex, 1);
@@ -2620,8 +2678,45 @@ function setupDraftListeners() {
   });
 }
 
+// One id per workout being built, kept in the draft, so saving it again can't create a copy
+function getWorkoutSaveId() {
+  if (!currentWorkout.saveId) {
+    currentWorkout.saveId = window.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+  return currentWorkout.saveId;
+}
+
+let isSavingWorkout = false;
+
+// Sections load workouts once, so redraw them after a save instead of waiting for a reload.
+// Each refresh runs on its own so one failing doesn't stop the others.
+function refreshAfterWorkoutSaved({ reloadEditor = true } = {}) {
+  const refreshes = [
+    () => renderSavedWorkouts(),
+    () => reloadEditor && loadWorkouts(),
+    () => loadExercises(), // dropdown "Frequency" order counts workouts
+    () => {
+      const calendar = document.getElementById('calendar-container');
+      const yearFilter = document.getElementById('calendar-year-filter');
+      if (typeof createCalendar === 'function' && calendar && calendar.style.display === 'block') {
+        return createCalendar(parseInt(yearFilter?.value, 10) || new Date().getFullYear());
+      }
+    },
+    () => typeof loadProgressData === 'function' && loadProgressData(),
+    () => typeof loadVolumeData === 'function' && loadVolumeData()
+  ];
+  refreshes.forEach((refresh) => {
+    try {
+      Promise.resolve(refresh()).catch((error) => console.error('Refresh after save failed:', error));
+    } catch (error) {
+      console.error('Refresh after save failed:', error);
+    }
+  });
+}
+
 // Save workout to Firebase
 saveWorkoutBtn.addEventListener('click', async () => {
+  if (isSavingWorkout) return;
   if (selectedExercises.length === 0) {
     showNotice('Please add some exercises before saving!', 'error');
     return;
@@ -2648,20 +2743,28 @@ saveWorkoutBtn.addEventListener('click', async () => {
     exercises: workoutExercises,
     intensity: intensityValue,
     intensityNote: intensityNoteValue,
-    duration: workoutDuration
+    duration: workoutDuration,
+    saveId: getWorkoutSaveId()
   };
 
+  isSavingWorkout = true;
+  saveWorkoutBtn.disabled = true;
   try {
     await saveWorkout(workout);
     selectedExercises.length = 0;
     currentWorkout.intensity = '';
     currentWorkout.intensityNote = '';
+    currentWorkout.saveId = '';
     renderExerciseList();
     resetBtn.click();
     checkLastWorkoutResult();
     showNotice('Workout saved successfully!', 'success');
+    refreshAfterWorkoutSaved();
   } catch (error) {
     showNotice(error.message, 'error');
+  } finally {
+    isSavingWorkout = false;
+    saveWorkoutBtn.disabled = false;
   }
 });
 
@@ -2721,6 +2824,9 @@ function loadWorkoutDraft() {
       }
       if (draft.intensityNote) {
         currentWorkout.intensityNote = draft.intensityNote; // Load intensity note
+      }
+      if (draft.saveId) {
+        currentWorkout.saveId = draft.saveId; // Resaving a restored draft updates the same workout
       }
       renderExerciseList(); // Render the draft
       updateVolumeSummary();
@@ -2810,7 +2916,8 @@ function saveWorkoutDraft() {
     exercises: selectedExercises,
     intensity: document.getElementById('workoutIntensity')?.value ?? (currentWorkout.intensity || ''), // Save intensity
     intensityNote: currentWorkout.intensityNote || '', // Save intensity note
-    date: getToday()
+    date: getToday(),
+    saveId: getWorkoutSaveId()
   };
 
   getWorkoutDraftRef().set(draft, (error) => {
@@ -2952,7 +3059,7 @@ function renderSavedWorkouts() {
       const intensity = workout.intensity ? `Score: ${workout.intensity}/10` : '';
       const intensityNote = workout.intensityNote ? workout.intensityNote : '';
       const duration = workout.duration ? workout.duration : '';
-      const dateText = `<strong>Workout on ${date}</strong>`;
+      const dateText = `<strong>Workout on ${formatWorkoutListDate(date)}</strong>`;
       const intensityText = intensity ? `<span style="color: green;">${intensity}</span>` : '';
       const durationText = duration ? `<span style="color: green;">${duration}</span>` : '';
       const intensityNoteText = intensityNote ? `<span style="color: green;">${intensityNote}</span>` : '';

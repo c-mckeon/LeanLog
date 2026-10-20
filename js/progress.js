@@ -9,7 +9,7 @@ const recordE1RMBtn = document.getElementById('recordE1RMBtn');
 const showDataButton = document.getElementById('showDataButton');
 const performanceList = document.getElementById('performanceList');
 
-let currentProgressView = 'e1RM';
+let currentProgressView = 'bestEfforts';
 let allExercisesMap = {};
 let exerciseIdByLowerName = {};
 let isPerformanceListVisible = false;
@@ -333,7 +333,7 @@ function populateExerciseDropdowns(exercises, visibleExerciseIds = []) {
   if (!ORMexerciseInput || !ORMexerciseDataFilter) return;
 
   ORMexerciseInput.innerHTML = '<option value="">Select exercise</option>';
-  ORMexerciseDataFilter.innerHTML = '<option value="all">All exercises</option>';
+  ORMexerciseDataFilter.innerHTML = '<option value="all">Filter by exercise</option>';
 
   const exerciseIds = (visibleExerciseIds.length ? visibleExerciseIds : Object.keys(exercises)).filter(isExerciseTracked);
 
@@ -488,6 +488,9 @@ function saveE1RMEntry() {
     timestamp,
     unixtime
   }).then(() => {
+    document.getElementById('ORMrepsInput').value = '';
+    document.getElementById('ORMweightInput').value = '';
+    setE1RMRecordFormOpen(false);
     loadProgressData();
     if (isPerformanceListVisible) {
       loadPerformanceList();
@@ -610,12 +613,26 @@ if (recordE1RMBtn) {
   recordE1RMBtn.addEventListener('click', saveE1RMEntry);
 }
 
+// The exercise, reps and weight fields stay tucked behind "Record max effort set"
+const recordE1RMToggle = document.getElementById('recordE1RMToggle');
+const e1rmRecordForm = document.getElementById('e1rmRecordForm');
+
+function setE1RMRecordFormOpen(isOpen) {
+  if (!recordE1RMToggle || !e1rmRecordForm) return;
+  e1rmRecordForm.hidden = !isOpen;
+  recordE1RMToggle.setAttribute('aria-expanded', String(isOpen));
+  recordE1RMToggle.classList.toggle('active', isOpen);
+  if (isOpen) document.getElementById('ORMexerciseInput')?.focus();
+}
+
+recordE1RMToggle?.addEventListener('click', () => setE1RMRecordFormOpen(e1rmRecordForm.hidden));
+
 if (showDataButton) {
   showDataButton.addEventListener('click', () => {
     if (!performanceList) return;
     isPerformanceListVisible = !isPerformanceListVisible;
     updateProgressControlsVisibility();
-    showDataButton.textContent = isPerformanceListVisible ? 'Hide Data' : 'Show Data';
+    showDataButton.textContent = isPerformanceListVisible ? 'Hide Entries' : 'Show Entries';
     if (isPerformanceListVisible) {
       loadPerformanceList();
     }

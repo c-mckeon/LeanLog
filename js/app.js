@@ -1314,13 +1314,15 @@ async function loadWorkouts() {
 }
 
 // Display current workout node
-function buildPastSetRowHtml(exerciseIndex, setIndex, set) {
+// customLabel is set for exercises with a custom field (e.g. "Laps"); others get no custom box
+function buildPastSetRowHtml(exerciseIndex, setIndex, set, customLabel = '') {
   set = set || {};
   return `
     <div class="set-row we-set" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}">
       <span class="we-set-number">${setIndex + 1}</span>
       <input type="number" id="set_reps_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.reps || '')}" placeholder="Reps" aria-label="Reps">
       <input type="number" id="set_weight_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.weight || '')}" placeholder="Weight" aria-label="Weight">
+      ${customLabel ? `<input type="text" id="set_custom_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.custom || '')}" placeholder="${escapeExerciseHtml(customLabel)}" aria-label="${escapeExerciseHtml(customLabel)}">` : ''}
       <input type="text" id="set_note_${exerciseIndex}_${setIndex}" value="${escapeExerciseHtml(set.note || '')}" placeholder="Note" aria-label="Set note" class="we-set-note">
       <button type="button" class="exo-btn exo-btn-sm exo-btn-danger remove-set-editor-btn" data-exercise-index="${exerciseIndex}" data-set-index="${setIndex}">Remove</button>
     </div>`;
@@ -1347,14 +1349,21 @@ function buildExerciseNameSelect(index, currentName) {
   return `<select id="name_${index}">${options.join("")}</select>`;
 }
 
+function getExerciseCustomLabel(exercise) {
+  const setsList = Array.isArray(exercise?.setsList) ? exercise.setsList : [];
+  const hasCustom = normalizeFields(exercise?.fields).includes('custom') || Boolean(exercise?.customLabel) || setsList.some((set) => set && set.custom);
+  return hasCustom ? (exercise.customLabel || 'Custom') : '';
+}
+
 function buildPastExerciseHtml(exercise, index) {
   const setsList = Array.isArray(exercise.setsList) ? exercise.setsList : [];
+  const customLabel = getExerciseCustomLabel(exercise);
   const legacyField = (id, label, value) => `
     <label class="we-legacy-field">${label}
       <input type="number" id="${id}_${index}" value="${escapeExerciseHtml(value)}" placeholder="${label}">
     </label>`;
   const setsHtml = setsList.length > 0
-    ? setsList.map((set, setIndex) => buildPastSetRowHtml(index, setIndex, set)).join('')
+    ? setsList.map((set, setIndex) => buildPastSetRowHtml(index, setIndex, set, customLabel)).join('')
     : `<div class="legacy-row we-legacy">
         ${legacyField('legacy_sets', 'Sets', exercise.sets || '')}
         ${legacyField('legacy_reps', 'Reps', exercise.reps || '')}
@@ -1362,7 +1371,7 @@ function buildPastExerciseHtml(exercise, index) {
       </div>`;
 
   return `
-    <div class="exercise-entry we-exercise" data-index="${index}">
+    <div class="exercise-entry we-exercise" data-index="${index}" data-custom-label="${escapeExerciseHtml(customLabel)}">
       <div class="we-exercise-main">
         <label class="we-field">Name
           ${buildExerciseNameSelect(index, exercise.name)}
@@ -1591,20 +1600,31 @@ function saveChanges() {
             var repsValue = entry.querySelector(`#set_reps_${index}_${setIndex}`)?.value;
             var weightValue = entry.querySelector(`#set_weight_${index}_${setIndex}`)?.value;
             var noteValue = entry.querySelector(`#set_note_${index}_${setIndex}`)?.value;
+            var customValue = entry.querySelector(`#set_custom_${index}_${setIndex}`)?.value;
 
-            if (repsValue || weightValue || noteValue) {
+            if (repsValue || weightValue || noteValue || customValue) {
                 setsList.push({
                     reps: repsValue || '',
                     weight: weightValue || '',
-                    note: noteValue || ''
+                    note: noteValue || '',
+                    custom: customValue || ''
                 });
             }
         });
 
+        // Keep what the editor doesn't show (id, fields, custom label, variation...) unless the
+        // exercise was switched to a different one
+        var original = (workoutsById[workoutID]?.exercises || [])[index];
+        var kept = original && original.name === name ? { ...original } : {};
+        delete kept.sets; delete kept.reps; delete kept.weight; delete kept.setsList;
+
         if (setsList.length > 0) {
             exerciseUpdates.push({
+                ...kept,
                 name,
                 note,
+                sets: setsList.length,
+                reps: setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0),
                 setsList
             });
             return;
@@ -1614,7 +1634,7 @@ function saveChanges() {
         var legacyReps = parseInt(entry.querySelector(`#legacy_reps_${index}`)?.value, 10);
         var legacyWeight = parseFloat(entry.querySelector(`#legacy_weight_${index}`)?.value);
 
-        var exerciseObj = { name, note };
+        var exerciseObj = { ...kept, name, note };
         if (!isNaN(legacySets)) exerciseObj.sets = legacySets;
         if (!isNaN(legacyReps)) exerciseObj.reps = legacyReps;
         if (!isNaN(legacyWeight)) exerciseObj.weight = legacyWeight;
@@ -1763,7 +1783,7 @@ function initWorkoutEditorControls() {
         const setsWrapper = document.getElementById(`setsWrapper_${exerciseIndex}`);
         if (!setsWrapper) return;
         const nextSetIndex = setsWrapper.querySelectorAll('.set-row').length;
-        setsWrapper.insertAdjacentHTML('beforeend', buildPastSetRowHtml(Number(exerciseIndex), nextSetIndex));
+        setsWrapper.insertAdjacentHTML('beforeend', buildPastSetRowHtml(Number(exerciseIndex), nextSetIndex, {}, addSetButton.closest('.exercise-entry')?.dataset.customLabel || ''));
         return;
       }
 
@@ -2358,6 +2378,17 @@ function saveexo() {
     .then(() => {
       showNotice("Exercise updated successfully!", 'success');
       renderExerciseSelector();
+      // Apply the new fields to this exercise if it's already in the builder
+      exerciseMetadataById[exerciseId] = {
+        ...(exerciseMetadataById[exerciseId] || {}),
+        fields: normalizeFields(updatedData.fields),
+        customLabel: updatedData.customLabel,
+        variations: normalizeExerciseVariations(updatedData.variations)
+      };
+      if (selectedExercises.some((exercise) => exercise.id === exerciseId)) {
+        renderExerciseList();
+        saveWorkoutDraft();
+      }
     })
     .catch(error => showNotice("Error updating exercise: " + error.message, 'error'));
 }
@@ -2445,6 +2476,14 @@ function renderExerciseList() {
     const exerciseDiv = document.createElement('div');
     exerciseDiv.className = 'exercise-item';
 
+    // Follow the exercise's current settings, so a change in the exercise editor (e.g. unticking
+    // reps) applies to exercises already in the builder
+    const metadata = exerciseMetadataById[exercise.id];
+    if (metadata) {
+      exercise.fields = metadata.fields;
+      exercise.customLabel = metadata.customLabel;
+    }
+
     // Ensure sets list exists and enforce at least one set for exercises that track sets/reps
     ensureSetsList(exercise);
     const fields = normalizeFields(exercise.fields);
@@ -2455,12 +2494,13 @@ function renderExerciseList() {
     }
     const setsList = Array.isArray(exercise.setsList) ? exercise.setsList : [];
     const totalSets = setsList.length;
+    const showReps = fields.includes('reps');
     const showWeight = fields.includes('weight');
     const showCustom = fields.includes('custom');
     const customOnly = showCustom && !showSetsReps;
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
-    const volumeLabel = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
+    const volumeLabel = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight, fields.includes('reps'));
     const volumeDetailsHtml = `<span class="volume-details">${volumeLabel}</span>`;
     const variations = normalizeExerciseVariations(exerciseMetadataById[exercise.id]?.variations ?? exercise.variations);
     const variationButtonHtml = variations.length
@@ -2479,7 +2519,7 @@ function renderExerciseList() {
       const attrs = `data-index="${index}" data-set-index="${setIndex}"`;
       return `
       <span class="set-counter">${setIndex + 1}</span>
-      <input type="number" class="form-control form-control-sm set-input set-reps-input" ${attrs} value="${set.reps || ''}" placeholder="Reps" aria-label="Set ${setIndex + 1} reps">
+      ${showReps ? `<input type="number" class="form-control form-control-sm set-input set-reps-input" ${attrs} value="${set.reps || ''}" placeholder="Reps" aria-label="Set ${setIndex + 1} reps">` : ''}
       ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${attrs} value="${set.weight || ''}" placeholder="Weight" aria-label="Set ${setIndex + 1} weight">` : ''}
       ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${attrs} value="${set.custom || ''}" placeholder="${customPlaceholder}" aria-label="Set ${setIndex + 1} ${customPlaceholder}">` : ''}
       ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${attrs} value="${set.note || ''}" placeholder="Set notes" aria-label="Set ${setIndex + 1} notes">` : ''}
@@ -2498,19 +2538,24 @@ function renderExerciseList() {
       <button type="button" class="btn btn-sm btn-outline-secondary set-up-btn" data-index="${index}" ${activeSetIndex < totalSets - 1 ? '' : 'disabled'}>▲</button>
       <span class="set-counter" data-index="${index}">${activeSetIndex + 1}/${totalSets}</span>
       <button type="button" class="btn btn-sm btn-outline-secondary set-down-btn" data-index="${index}" ${activeSetIndex > 0 ? '' : 'disabled'}>▼</button>
-      <input type="number" class="form-control form-control-sm set-input set-reps-input" ${setAttrs} value="${currentSet.reps || ''}" placeholder="Reps">
+      ${showReps ? `<input type="number" class="form-control form-control-sm set-input set-reps-input" ${setAttrs} value="${currentSet.reps || ''}" placeholder="Reps">` : ''}
       ${showWeight ? `<input type="number" class="form-control form-control-sm set-input set-weight-input" ${setAttrs} value="${currentSet.weight || ''}" placeholder="Weight">` : ''}
       ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${setAttrs} value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : ''}
       ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${setAttrs} value="${currentSet.note || ''}" placeholder="Set notes">` : ''}
       <button type="button" class="btn btn-sm btn-outline-danger remove-set-btn" ${setAttrs}>×</button>
     ` : (customOnly ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : '');
 
+    // Exercises with nothing to track put their notes in the empty sets column; a spacer
+    // keeps the remove button lined up with the other rows
+    const noteInputHtml = `<input type="text" class="form-control form-control-sm note-input" placeholder="Exercise notes" data-index="${index}" value="${exercise.note || ''}">`;
+    const notesInSets = !setControlsHtml;
+
     exerciseDiv.innerHTML = `
     <div class="wk-row">
       <span class="wk-name" title="${escapeExerciseHtml(exercise.name)}">${exerciseTitleHtml}</span>
-      <div class="wk-sets">${variationButtonHtml}${setControlsHtml}</div>
+      <div class="wk-sets">${variationButtonHtml}${notesInSets ? noteInputHtml : setControlsHtml}</div>
       ${volumeDetailsHtml}
-      <input type="text" class="form-control form-control-sm note-input" placeholder="Exercise notes" data-index="${index}" value="${exercise.note || ''}">
+      ${notesInSets ? '<span class="wk-note-spacer" aria-hidden="true"></span>' : noteInputHtml}
       <button type="button" class="btn btn-danger btn-sm remove-btn" data-index="${index}">X</button>
     </div>
     ${extraSetRowsHtml}
@@ -2539,12 +2584,13 @@ function renderExerciseList() {
   updateVolumeSummary();
 }
 
-function getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight) {
+// Reps (and weight moved, which needs reps) only appear for exercises that track reps
+function getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight, tracksReps = true) {
   if (!showSetsReps || (!showSetsRepsCounter && !showWeightMoved)) return '';
   if (totalSets <= 0) return 'No sets yet';
   const parts = [];
-  if (showSetsRepsCounter) parts.push(`${totalSets} sets • ${totalReps} reps`);
-  if (showWeightMoved) parts.push(`${totalWeight} kg moved`);
+  if (showSetsRepsCounter) parts.push(tracksReps ? `${totalSets} sets • ${totalReps} reps` : `${totalSets} sets`);
+  if (showWeightMoved && tracksReps) parts.push(`${totalWeight} kg moved`);
   return parts.join(' • ');
 }
 
@@ -2872,7 +2918,7 @@ function addSetToExercise(exerciseIndex) {
   renderExerciseList();
   if (setsDisplayMode === 'all') {
     exerciseList.querySelectorAll('.exercise-item')[index]
-      ?.querySelectorAll('.set-reps-input')[exercise.setsList.length - 1]?.focus();
+      ?.querySelector(`.set-input[data-set-index="${exercise.setsList.length - 1}"]`)?.focus();
   }
 }
 
@@ -2901,7 +2947,7 @@ function updateVolumeSummary() {
     const totalSets = setsList.length;
     const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
     const totalWeight = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
-    const label = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight);
+    const label = getVolumeDetailsText(showSetsReps, totalSets, totalReps, totalWeight, fields.includes('reps'));
 
     const labelEl = exerciseDiv.querySelector('.volume-details');
     if (labelEl) {
@@ -3074,12 +3120,13 @@ function renderSavedWorkouts() {
           const totalSets = setsList.length;
           const totalReps = setsList.reduce((sum, set) => sum + (parseInt(set.reps, 10) || 0), 0);
           const weightMoved = setsList.reduce((sum, set) => sum + ((parseInt(set.reps, 10) || 0) * (parseFloat(set.weight) || 0)), 0);
-          const summary = totalSets > 0 ? `${totalSets} sets • ${totalReps} reps${weightMoved ? ` • ${weightMoved} kg moved` : ''}` : '';
+          const summary = totalSets > 0 ? `${totalSets} sets${totalReps ? ` • ${totalReps} reps` : ''}${weightMoved ? ` • ${weightMoved} kg moved` : ''}` : '';
           const setDetails = setsList.map((set, idx) => {
-            const reps = set.reps || '-';
-            const weight = set.weight ? ` x ${set.weight}kg` : '';
+            // "reps" is spelled out only next to a custom value, where a bare number would be unclear
+            const reps = set.reps ? `${set.reps}${set.custom ? ' reps' : ''}${set.weight ? ` x ${set.weight}kg` : ''}` : (set.weight ? `${set.weight}kg` : '');
+            const custom = set.custom ? `${escapeExerciseHtml(set.custom)} ${escapeExerciseHtml(e.customLabel || '')}`.trim() : '';
             const setNote = set.note ? ` (${set.note})` : '';
-            return `${idx + 1}) ${reps}${weight}${setNote}`;
+            return `${idx + 1}) ${[reps, custom].filter(Boolean).join(' · ') || '-'}${setNote}`;
           }).join(', ');
           return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>${variation}: ${summary}${noteText}${setDetails ? ` — ${setDetails}` : ''}</div>`;
         }

@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-1yTbYV_a.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-DckqnMZC.css">
 </head>
 <body>
   
@@ -63,7 +63,7 @@
 
       <div class="settings-section-block">
         <label class="settings-section-title settings-section-toggle" for="includeAddEditSetting" title="Include this section">
-          <span>Add and Edit</span>
+          <span>Exercises</span>
           <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked>
         </label>
       </div>
@@ -72,6 +72,13 @@
         <label class="settings-section-title settings-section-toggle" for="includeWorkoutsSetting" title="Include this section">
           <span>Show Workouts</span>
           <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked>
+        </label>
+      </div>
+
+      <div class="settings-section-block">
+        <label class="settings-section-title settings-section-toggle" for="includeBioSetting" title="Include this section">
+          <span>Bio</span>
+          <input type="checkbox" id="includeBioSetting" data-section-setting="bio" checked>
         </label>
       </div>
 
@@ -235,9 +242,10 @@
 
   <!-- Section tabs: each opens its content in the shared panel below; only one is open at a time -->
   <nav id="sectionTabs" class="section-tabs" aria-label="Sections">
-    <button type="button" id="toggleFormBtn" class="section-tab" data-section="addEdit" aria-expanded="false">Add and Edit</button>
+    <button type="button" id="toggleFormBtn" class="section-tab" data-section="addEdit" aria-expanded="false">Exercises</button>
     <button type="button" id="showWorkoutsBtn" class="section-tab" data-section="workouts" aria-expanded="false">Workouts</button>
     <button type="button" id="showCalendarBtn" class="section-tab" data-section="calendar" aria-expanded="false">Calendar</button>
+    <button type="button" id="toggleBioBtn" class="section-tab" data-section="bio" aria-expanded="false">Bio</button>
     <button type="button" id="toggleprogressBtn" class="section-tab" data-section="progress" aria-expanded="false">Progress</button>
     <button type="button" id="toggleVolumeBtn" class="section-tab" data-section="volume" aria-expanded="false">Volume</button>
   </nav>
@@ -247,12 +255,11 @@
   <!-- Add Exercise Section -->
   <section id="addEditSection" class="section-panel" data-section="addEdit">
   <div class="row p-3" id="addExerciseSectiondiv">
-    <!-- Add and Edit Section -->
+    <!-- Exercises section (tab key is still "addEdit") -->
     <div class="col-12">
         <div class="exo-toolbar">
           <span id="addEditToolbarButtons" class="exo-toolbar-group hidden">
             <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn">Add Exercise</button>
-            <button type="button" id="showeditorbtn" class="exo-btn">Workout Editor</button>
             <button type="button" id="showexoeditorbtn" class="exo-btn">Exercise Editor</button>
           </span>
           <span class="exo-toolbar-spacer"></span>
@@ -321,24 +328,6 @@
           </div>
         </section> 
     </div>
-    <!-- Editor Section (Appears Below) -->
-
-        <div id="workouteditor" >
-            <div id="editorsection" class="hidden">
-                <div class="we-toolbar">
-                  <select id="workoutYearNav" class="we-nav" aria-label="Year"></select>
-                  <select id="workoutMonthNav" class="we-nav" aria-label="Month"></select>
-                  <select id="workoutDayNav" class="we-nav" aria-label="Day"></select>
-                  <button type="button" id="addPastWorkoutBtn" class="exo-btn">Add past workout</button>
-                  <span class="exo-toolbar-spacer"></span>
-                  <button type="button" id="addPastExerciseBtn" class="exo-btn">Add exercise</button>
-                  <button type="button" id="saveChangesBtn" class="exo-btn exo-btn-primary">Save changes</button>
-                  <button type="button" id="deleteWorkoutBtn" class="exo-btn exo-btn-danger">Delete workout</button>
-                </div>
-                <form id="editForm"></form>
-                <div id="fields"></div>
-            </div>
-        </div>
         <div style="margin-top: 10px;" class="hidden" id="exerciseeditor" >
               <!-- Optionally, add a selector for the type if needed -->
 
@@ -404,6 +393,7 @@
                     <button type="button" id="nextExerciseBtn" class="btn btn-sm btn-outline-secondary" aria-label="Next exercise">›</button>
                   </span>
                 </div>
+                <section id="volumeMatrixSection" class="exo-card volume-matrix-card" hidden></section>
               </div></div>
 
           </div>
@@ -425,7 +415,13 @@
 
 
   <section class="row p-3 section-panel" id="showWorkoutsSection" data-section="workouts">
-    <div class="col-12 period-bar" id="showworkouts">
+    <!-- Workouts: List shows saved workouts; Editor edits or adds past workouts -->
+    <div class="col-12 hidden" id="workoutsArea">
+    <div class="period-bar" id="showworkouts">
+      <span class="exo-toolbar-group" role="group" aria-label="Workouts view">
+        <button type="button" id="workoutsListModeBtn" class="exo-btn exo-btn-active" aria-pressed="true">List</button>
+        <button type="button" id="workoutsEditorModeBtn" class="exo-btn" aria-pressed="false">Editor</button>
+      </span>
       <select id="workout-year-filter" class="period-select" aria-label="Year" style="display: none;">
         <option value="all">All years</option>
       </select>
@@ -434,6 +430,24 @@
     <!-- Saved Workouts Section -->
     <div class="row p-3 hidden" id="savedWorkoutList">
       <!-- Saved workouts will appear here -->
+    </div>
+
+        <div id="workouteditor" >
+            <div id="editorsection" class="hidden">
+                <div class="we-toolbar">
+                  <select id="workoutYearNav" class="we-nav" aria-label="Year"></select>
+                  <select id="workoutMonthNav" class="we-nav" aria-label="Month"></select>
+                  <select id="workoutDayNav" class="we-nav" aria-label="Day"></select>
+                  <button type="button" id="addPastWorkoutBtn" class="exo-btn">Add past workout</button>
+                  <span class="exo-toolbar-spacer"></span>
+                  <button type="button" id="addPastExerciseBtn" class="exo-btn">Add exercise</button>
+                  <button type="button" id="saveChangesBtn" class="exo-btn exo-btn-primary">Save changes</button>
+                  <button type="button" id="deleteWorkoutBtn" class="exo-btn exo-btn-danger">Delete workout</button>
+                </div>
+                <form id="editForm"></form>
+                <div id="fields"></div>
+            </div>
+        </div>
     </div>
   </section>
 
@@ -446,6 +460,7 @@
   <script src="js/analytics.js" defer></script>
   <script src="js/progress.js" defer></script>
   <script src="js/volume.js" defer></script>
+  <script src="js/bio.js" defer></script>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/date-fns"></script>
@@ -464,6 +479,47 @@
   </div>
 
   
+
+  <div class="row p-3 section-panel" id="bioSection" data-section="bio">
+    <div class="col-12">
+      <div id="bioarea" class="hidden">
+        <div class="bio-toolbar">
+          <div class="bio-group">
+            <!-- One chip per measurement (click to show it, x to remove), then "+ Add" -->
+            <div id="bioMetricChips" class="bio-chips" role="group" aria-label="Measurements"></div>
+            <div id="bioAddMetricForm" class="bio-group" hidden>
+              <input type="text" id="bioMetricName" class="form-control form-control-sm" placeholder="Name, e.g. Waist" maxlength="40" aria-label="Measurement name">
+              <input type="text" id="bioMetricUnit" class="form-control form-control-sm bio-unit-input" placeholder="Unit, e.g. cm" maxlength="12" aria-label="Unit">
+              <button type="button" id="bioSaveMetricBtn" class="btn btn-sm btn-success">Add</button>
+              <button type="button" id="bioCancelMetricBtn" class="btn btn-sm btn-outline-secondary">Cancel</button>
+            </div>
+          </div>
+          <div class="bio-group" role="group" aria-label="Chart display">
+            <select id="bioZoomSelect" class="form-control form-control-sm bio-zoom-select" aria-label="Zoom period">
+              <option value="all">All time</option>
+              <option value="1m">Last 1 month</option>
+              <option value="3m">Last 3 months</option>
+              <option value="6m">Last 6 months</option>
+              <option value="1y">Last 1 year</option>
+            </select>
+            <label class="bio-toggle"><input type="checkbox" id="bioShowPoints" checked> Points</label>
+            <label class="bio-toggle"><input type="checkbox" id="bioShowLine" checked> Trend</label>
+          </div>
+        </div>
+        <div class="bio-group bio-entry-row">
+          <span class="bio-entry-label">New reading</span>
+          <input type="number" id="bioEntryValue" class="form-control form-control-sm bio-value-input" step="any" aria-label="Value">
+          <button type="button" id="bioSaveEntryBtn" class="btn btn-sm btn-success">Save</button>
+          <!-- Readings are saved as "now"; this reveals a date box for logging an earlier day -->
+          <button type="button" id="bioDateToggle" class="btn btn-sm btn-outline-secondary" aria-expanded="false" aria-controls="bioEntryDate">Change date</button>
+          <input type="date" id="bioEntryDate" class="form-control form-control-sm bio-date-input" aria-label="Date" hidden>
+        </div>
+        <div class="bio-chart-wrap"><canvas id="bioChart" role="img" aria-label="Measurement chart"></canvas></div>
+        <p id="bioEmpty" class="exo-hint" hidden>No entries yet. Add one above to start the chart.</p>
+        <ul id="bioEntryList" class="bio-entry-list"></ul>
+      </div>
+    </div>
+  </div>
 
   <div class="row p-3 section-panel" id="progressdiv" data-section="progress">
     <div class="col-12">

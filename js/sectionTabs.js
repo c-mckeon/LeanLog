@@ -9,8 +9,9 @@
 (function () {
   const contentIds = {
     addEdit: 'addEditToolbarButtons',
-    workouts: 'savedWorkoutList',
+    workouts: 'workoutsArea',
     calendar: 'calendar-container',
+    bio: 'bioarea',
     progress: 'progressarea',
     volume: 'volumearea'
   };

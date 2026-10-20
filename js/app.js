@@ -331,6 +331,7 @@ const sectionVisibilityTargets = {
   addEdit: ['#addEditSection', '#toggleFormBtn'],
   workouts: ['#showWorkoutsSection', '#showWorkoutsBtn'],
   calendar: ['#calendarSection', '#showCalendarBtn'],
+  bio: ['#bioSection', '#toggleBioBtn'],
   progress: ['#progressdiv', '#toggleprogressBtn'],
   volume: ['#showvolume', '#toggleVolumeBtn']
 };
@@ -1664,7 +1665,7 @@ function saveChanges() {
             String(workoutsById[b]?.date || "").localeCompare(String(workoutsById[a]?.date || "")) || a.localeCompare(b));
           currentIndex = Math.max(workoutKeys.indexOf(result.id), 0);
           displayCurrentNode();
-          collapseAddEditSection();
+          showNotice("Workout added.", "success");
           refreshAfterWorkoutSaved({ reloadEditor: false });
         })
         .catch(error => showNotice("Error: " + error.message, 'error'));
@@ -1678,7 +1679,7 @@ function saveChanges() {
           String(workoutsById[b]?.date || '').localeCompare(String(workoutsById[a]?.date || '')) || a.localeCompare(b));
         currentIndex = Math.max(workoutKeys.indexOf(workoutID), 0);
         renderWorkoutNav();
-        collapseAddEditSection();
+        showNotice("Workout saved.", "success");
         refreshAfterWorkoutSaved({ reloadEditor: false });
       })
       .catch(error => showNotice("Error: " + error.message, 'error'));
@@ -1935,6 +1936,7 @@ async function persistExerciseUpdates(exerciseId, updates) {
   [exerciseDataMap[exerciseId], exerciseMetadataById[exerciseId]].forEach((record) => {
     if (record) Object.assign(record, updates);
   });
+  renderVolumeMatrix();
 }
 
 // "Add variation" swaps the variation selector for an inline name box.
@@ -2145,6 +2147,66 @@ function buildVolumeRowHtml(group, weight) {
     </tr>`;
 }
 
+// "Show table": every exercise and variation against every muscle group, below the editor.
+// A variation without mappings of its own uses the exercise default, shown greyed.
+let volumeMatrixOpen = false;
+
+function renderVolumeMatrix() {
+  const section = document.getElementById('volumeMatrixSection');
+  if (!section) return;
+  section.hidden = !volumeMatrixOpen;
+  if (!volumeMatrixOpen) {
+    section.innerHTML = '';
+    return;
+  }
+
+  const categoryNames = Object.keys(exerciseCatalogByCategory || {});
+  const orderedCategories = [...new Set([...exerciseCategories.filter((name) => categoryNames.includes(name)), ...categoryNames])];
+  const rows = [];
+  const groups = new Set(volumeMuscleGroups);
+  orderedCategories.forEach((category) => {
+    const exercises = Object.values(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {})
+      .filter((exercise) => exercise && typeof exercise.name === 'string' && exercise.name.trim())
+      .sort((a, b) => a.name.localeCompare(b.name));
+    exercises.forEach((exercise) => {
+      const mappings = normalizeVolumeMappings(exercise.volumeMappings);
+      mappings.forEach((mapping) => groups.add(mapping.muscleGroup));
+      const weightsFor = (variation) => Object.fromEntries(mappings
+        .filter((mapping) => mapping.variation === variation && mapping.weight > 0)
+        .map((mapping) => [mapping.muscleGroup, mapping.weight]));
+      const defaults = weightsFor('');
+      rows.push({ category, name: exercise.name, variation: '', weights: defaults, inherited: false });
+      normalizeExerciseVariations(exercise.variations).forEach((variation) => {
+        const own = weightsFor(variation);
+        const inherited = Object.keys(own).length === 0;
+        rows.push({ category, name: exercise.name, variation, weights: inherited ? defaults : own, inherited });
+      });
+    });
+  });
+
+  const groupList = [...groups];
+  const header = `<tr><th>Exercise</th><th>Variation</th>${groupList.map((group) => `<th>${escapeExerciseHtml(group)}</th>`).join('')}</tr>`;
+  let lastCategory = null;
+  const bodyHtml = rows.map((row) => {
+    const categoryRow = row.category !== lastCategory
+      ? `<tr class="volume-matrix-category"><th colspan="${groupList.length + 2}">${escapeExerciseHtml(row.category)}</th></tr>`
+      : '';
+    lastCategory = row.category;
+    const cells = groupList.map((group) => {
+      const weight = row.weights[group];
+      return `<td${row.inherited && weight ? ' class="volume-matrix-inherited" title="Uses the exercise default"' : ''}>${weight ? weight : ''}</td>`;
+    }).join('');
+    return `${categoryRow}<tr><td>${row.variation ? '' : escapeExerciseHtml(row.name)}</td><td>${row.variation ? escapeExerciseHtml(row.variation) : '<span class="exo-hint">Default</span>'}</td>${cells}</tr>`;
+  }).join('');
+
+  section.innerHTML = `
+    <div class="exo-card-header"><h3>All exercises <small>(muscle group contributions)</small></h3></div>
+    <p class="exo-hint">Grey values are variations using their exercise's default.</p>
+    <div class="volume-matrix-scroll">
+      <table class="volume-matrix">${rows.length ? `<thead>${header}</thead><tbody>${bodyHtml}</tbody>` : '<tbody><tr><td class="exo-hint">No exercises yet.</td></tr></tbody>'}</table>
+    </div>`;
+}
+
 function renderVolumeTracking() {
   const section = document.getElementById('volumeTrackingSection');
   if (!section) return;
@@ -2167,7 +2229,10 @@ function renderVolumeTracking() {
   section.innerHTML = `
     <div class="exo-card-header">
       <h3>Target Groups <small>(Volume Tracking)</small></h3>
-      <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
+      <span class="exo-card-header-actions">
+        <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
+        <button type="button" id="toggleVolumeMatrixBtn" class="btn btn-sm btn-outline-secondary" aria-expanded="${volumeMatrixOpen}" aria-controls="volumeMatrixSection">${volumeMatrixOpen ? 'Hide table' : 'Show table'}</button>
+      </span>
     </div>
     <p class="exo-hint">${scope}</p>
     <table class="exo-volume-table">
@@ -2181,6 +2246,15 @@ function renderVolumeTracking() {
       Effective volume = completed sets × contribution. A contribution of 1.0 is a primary target and counts as direct sets; lower values are secondary muscles that assist the movement.
     </div>
   `;
+
+  document.getElementById('toggleVolumeMatrixBtn').addEventListener('click', (event) => {
+    volumeMatrixOpen = !volumeMatrixOpen;
+    event.currentTarget.textContent = volumeMatrixOpen ? 'Hide table' : 'Show table';
+    event.currentTarget.setAttribute('aria-expanded', String(volumeMatrixOpen));
+    renderVolumeMatrix();
+    if (volumeMatrixOpen) document.getElementById('volumeMatrixSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  renderVolumeMatrix();
 
   const body = document.getElementById('volumeMappingRows');
   const addButton = document.getElementById('addVolumeMappingBtn');
@@ -2426,10 +2500,6 @@ async function deleteexo(event) {
     .catch(error => showNotice("Error deleting exercise: " + error.message, 'error'));
 }
 
-// Optionally, the 'Exercise Editor' button can refresh the current view.
-document.getElementById("showeditorbtn").addEventListener("click", function() {
-  displayExercise();
-});
 
 //////////////////////////////////////////////////////////////////////// Exercise list editing
 
@@ -2997,7 +3067,6 @@ const toggleFormBtn = document.getElementById("toggleFormBtn");
 const addExerciseSection = document.getElementById("addExerciseSection");
 const addEditToolbarButtons = document.getElementById("addEditToolbarButtons");
 const exerciseActionButtons = document.getElementById("exerciseActionButtons");
-const workoutEditorBtn = document.getElementById("showeditorbtn");
 const exoEditorBtn = document.getElementById("showexoeditorbtn");
 const workoutEditorSection = document.getElementById("editorsection");
 const exerciseEditorSection = document.getElementById("exerciseeditor");
@@ -3007,10 +3076,8 @@ const exerciseNotesSection = document.getElementById("exercisenotessection");
 
 // Reflect which panel is open: active toolbar buttons, and the exercise Save/Delete actions.
 function syncAddEditToolbar() {
-  const workoutOpen = !workoutEditorSection.classList.contains("hidden");
   const exerciseOpen = !exerciseEditorSection.classList.contains("hidden");
   const addFormOpen = !addExerciseFormWrapper.classList.contains("hidden");
-  workoutEditorBtn.classList.toggle("exo-btn-active", workoutOpen);
   exoEditorBtn.classList.toggle("exo-btn-active", exerciseOpen);
   toggleAddExerciseFormBtn.classList.toggle("exo-btn-active", addFormOpen);
   exerciseActionButtons.classList.toggle("hidden", !exerciseOpen);
@@ -3034,24 +3101,14 @@ toggleFormBtn.addEventListener("click", () => {
 
   if (!isOpening) {
     addExerciseFormWrapper.classList.add("hidden");
-    workoutEditorSection.classList.add("hidden");
     exerciseEditorSection.classList.add("hidden");
   }
-  syncAddEditToolbar();
-});
-
-// Toggle Workout Editor section
-workoutEditorBtn.addEventListener("click", () => {
-  workoutEditorSection.classList.toggle("hidden");
-  exerciseEditorSection.classList.add("hidden");
-  addExerciseFormWrapper.classList.add("hidden");
   syncAddEditToolbar();
 });
 
 // Toggle Exercise Editor section
 exoEditorBtn.addEventListener("click", () => {
   exerciseEditorSection.classList.toggle("hidden");
-  workoutEditorSection.classList.add("hidden");
   addExerciseFormWrapper.classList.add("hidden");
   syncAddEditToolbar();
 });
@@ -3060,7 +3117,6 @@ exoEditorBtn.addEventListener("click", () => {
 if (toggleAddExerciseFormBtn) {
   toggleAddExerciseFormBtn.addEventListener("click", () => {
     if (!addExerciseFormWrapper.classList.contains("hidden")) {
-      workoutEditorSection.classList.add("hidden");
       exerciseEditorSection.classList.add("hidden");
     }
     syncAddEditToolbar();
@@ -3175,21 +3231,38 @@ if (workoutMonthSelect) {
   workoutMonthSelect.addEventListener('change', renderSavedWorkouts);
 }
 
-// Toggle workouts (and the filter) when the "Workouts" tab is clicked
+// Workouts tab: "List" shows saved workouts with their year/month filters,
+// "Editor" swaps them for the past-workout editor. The tab remembers the last view.
+const workoutsArea = document.getElementById('workoutsArea');
+const workoutsListModeBtn = document.getElementById('workoutsListModeBtn');
+const workoutsEditorModeBtn = document.getElementById('workoutsEditorModeBtn');
+let workoutsMode = 'list';
+
+function setWorkoutsMode(mode) {
+  workoutsMode = mode;
+  const showList = mode === 'list';
+  workoutsListModeBtn.classList.toggle('exo-btn-active', showList);
+  workoutsListModeBtn.setAttribute('aria-pressed', String(showList));
+  workoutsEditorModeBtn.classList.toggle('exo-btn-active', !showList);
+  workoutsEditorModeBtn.setAttribute('aria-pressed', String(!showList));
+  ['workout-year-filter', 'workout-month-filter'].forEach((id) => {
+    const filter = document.getElementById(id);
+    if (filter) filter.style.display = showList ? 'inline' : 'none';
+  });
+  if (showList) renderSavedWorkouts();
+  else savedWorkoutList.innerHTML = '';
+  savedWorkoutList.classList.toggle('hidden', !showList);
+  workoutEditorSection.classList.toggle('hidden', showList);
+}
+
+workoutsListModeBtn.addEventListener('click', () => setWorkoutsMode('list'));
+workoutsEditorModeBtn.addEventListener('click', () => setWorkoutsMode('editor'));
+
 workoutButton.addEventListener('click', () => {
-  const workoutYearElement = document.getElementById('workout-year-filter');
-  const workoutMonthElement = document.getElementById('workout-month-filter');
-  if (savedWorkoutList.classList.contains('hidden')) {
-    renderSavedWorkouts(); // Populate the workouts
-    savedWorkoutList.classList.remove('hidden'); // Make the workouts list visible
-    if (workoutYearElement) workoutYearElement.style.display = 'inline';
-    if (workoutMonthElement) workoutMonthElement.style.display = 'inline';
-  } else {
-    savedWorkoutList.innerHTML = ''; // Clear the workouts content
-    savedWorkoutList.classList.add('hidden'); // Hide the workouts list
-    if (workoutYearElement) workoutYearElement.style.display = 'none';
-    if (workoutMonthElement) workoutMonthElement.style.display = 'none';
-  }
+  const opening = workoutsArea.classList.contains('hidden');
+  workoutsArea.classList.toggle('hidden', !opening);
+  if (opening) setWorkoutsMode(workoutsMode);
+  else savedWorkoutList.innerHTML = '';
 });
 
 

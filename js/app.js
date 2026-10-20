@@ -2543,7 +2543,7 @@ function renderExerciseList() {
       ${showCustom ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" ${setAttrs} value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : ''}
       ${showSetNotes ? `<input type="text" class="form-control form-control-sm set-input set-note-input" ${setAttrs} value="${currentSet.note || ''}" placeholder="Set notes">` : ''}
       <button type="button" class="btn btn-sm btn-outline-danger remove-set-btn" ${setAttrs}>×</button>
-    ` : (customOnly ? `<input type="text" class="form-control form-control-sm set-input set-custom-input" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : '');
+    ` : (customOnly ? `<input type="text" class="form-control form-control-sm set-input set-custom-input set-custom-only" data-index="${index}" data-set-index="0" value="${currentSet.custom || ''}" placeholder="${customPlaceholder}">` : '');
 
     // Exercises with nothing to track put their notes in the empty sets column; a spacer
     // keeps the remove button lined up with the other rows

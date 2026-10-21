@@ -16,12 +16,14 @@
   const metricUnitInput = el('bioMetricUnit');
   const showPointsBox = el('bioShowPoints');
   const showLineBox = el('bioShowLine');
+  const showSpreadBox = el('bioShowSpread');
   const zoomSelect = el('bioZoomSelect');
   const dateInput = el('bioEntryDate');
   const dateToggle = el('bioDateToggle');
   const valueInput = el('bioEntryValue');
   const saveEntryBtn = el('bioSaveEntryBtn');
   const chartCanvas = el('bioChart');
+  const statsPanel = el('bioStats');
   const emptyHint = el('bioEmpty');
   const entryList = el('bioEntryList');
 
@@ -30,6 +32,9 @@
   let entriesByMetric = {};
   let selectedId = '';
   let chart = null;
+  let model = null; // fitted trend and error model for the selected measurement (null with too few readings)
+  let shown = []; // the model's estimates within the zoom period
+  let hovered = null; // the estimate under the pointer, shown in the stats panel
 
   const escapeHtml = (text) => (typeof escapeExerciseHtml === 'function'
     ? escapeExerciseHtml(text)
@@ -58,6 +63,7 @@
       await window.database.ref('settings/bio').update({
         showPoints: showPointsBox.checked,
         showLine: showLineBox.checked,
+        showSpread: showSpreadBox.checked,
         zoom: zoomSelect.value,
         metric: selectedId
       });
@@ -79,6 +85,7 @@
       entriesByMetric = bio.entries || {};
       if (typeof settings.showPoints === 'boolean') showPointsBox.checked = settings.showPoints;
       if (typeof settings.showLine === 'boolean') showLineBox.checked = settings.showLine;
+      if (typeof settings.showSpread === 'boolean') showSpreadBox.checked = settings.showSpread;
       if (settings.zoom && [...zoomSelect.options].some((option) => option.value === settings.zoom)) zoomSelect.value = settings.zoom;
       if (!showPointsBox.checked && !showLineBox.checked) showPointsBox.checked = true;
       if (!selectedId || !metrics[selectedId]) selectedId = metrics[settings.metric] ? settings.metric : Object.keys(metrics)[0];
@@ -137,6 +144,78 @@
     return points.filter((point) => point.x >= cutoff);
   }
 
+  /* 14-day Gaussian trend with a ±1 SD spread band (replaced by the model further down), kept to come back to:
+  // Trend line: a Gaussian time-weighted average (TREND_SIGMA wide), worked out on an even
+  // grid of days rather than only at each reading, so bunched-up readings don't make it kink.
+  // Readings are split into runs wherever there's a gap longer than TREND_GAP; each run is
+  // smoothed on its own and the chart joins runs with a straight line, so the line doesn't
+  // invent bumps where there's no data. Raise TREND_SIGMA for a smoother line.
+  const TREND_SIGMA = 14 * DAY_MS;
+  const TREND_GAP = 30 * DAY_MS;
+  const TREND_MAX_GRID_POINTS = 400;
+
+  function trendLine(points) {
+    if (points.length < 2) return points.slice();
+    const sorted = points.slice().sort((a, b) => a.x - b.x);
+    const step = Math.max(DAY_MS, (sorted[sorted.length - 1].x - sorted[0].x) / TREND_MAX_GRID_POINTS);
+
+    const runs = [[sorted[0]]];
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].x - sorted[i - 1].x > TREND_GAP) runs.push([]);
+      runs[runs.length - 1].push(sorted[i]);
+    }
+
+    const weightAt = (p, t) => {
+      const dx = (p.x - t) / TREND_SIGMA;
+      return Math.exp(-0.5 * dx * dx);
+    };
+    const averageAt = (run, t, skip) => {
+      let sum = 0;
+      let weightSum = 0;
+      run.forEach((p) => {
+        if (p === skip) return;
+        const weight = weightAt(p, t);
+        sum += p.y * weight;
+        weightSum += weight;
+      });
+      return sum / weightSum;
+    };
+
+    // Spread band: besides the average (y), each point carries sd, the typical distance of
+    // readings from the trend around that time (a Gaussian-weighted root mean square, same
+    // width as the trend). Each reading's distance is measured against the trend worked out
+    // without it, so it can't pull the line towards itself and make the band look too tight,
+    // and measuring from the trend (not a flat average) stops steady gains or losses from
+    // counting as scatter. About 68% of readings should fall within ±1 sd. Where fewer than
+    // ~1.5 readings effectively count (n_eff = (Σw)² / Σw²), sd is null and the band has a gap.
+    const spreadAt = (residuals, t) => {
+      let squareSum = 0;
+      let weightSum = 0;
+      let squareWeightSum = 0;
+      residuals.forEach(({ p, residual }) => {
+        const weight = weightAt(p, t);
+        squareSum += weight * residual * residual;
+        weightSum += weight;
+        squareWeightSum += weight * weight;
+      });
+      if (!weightSum || (weightSum * weightSum) / squareWeightSum < 1.5) return null;
+      return Math.sqrt(squareSum / weightSum);
+    };
+
+    const line = [];
+    runs.forEach((run) => {
+      const residuals = run.length < 2 ? [] : run.map((p) => ({ p, residual: p.y - averageAt(run, p.x, p) }));
+      const add = (t) => line.push({ x: t, y: averageAt(run, t), sd: spreadAt(residuals, t) });
+      const start = run[0].x;
+      const end = run[run.length - 1].x;
+      for (let t = start; t < end; t += step) add(t);
+      add(end);
+    });
+    return line;
+  }
+  */
+
+  /* Previous trend line, kept to come back to:
   // Trend line: per point, a rolling average of the 5 points either side, blended with a
   // Gaussian (10-day) time-weighted average. Where readings are dense the Gaussian counts
   // for more (up to 100% at 8+ readings within 10 days); where they're sparse it's 50/50.
@@ -167,6 +246,366 @@
       return { x: point.x, y };
     });
   }
+  */
+
+  // ---- Trend and error: a statistical model of the readings ----
+  // Each reading = slow trend + short-term swing + reading noise:
+  // - slow trend: a level whose rate of change drifts slowly (behaves like a cubic smoothing spline)
+  // - swing: smooth ups and downs (water, food, ...) that fade over about `ell` days (Matérn 3/2)
+  // - reading noise: scatter between readings taken close together
+  // How big each part is gets fitted to this measurement's own readings (maximum likelihood).
+  // A Kalman filter and smoother then give, for any moment, the best estimate (trend + swing)
+  // and its error. The error grows across gaps with no readings and shrinks where readings are dense.
+  // Checked on the imported weight history by hiding readings and predicting them (single readings,
+  // gaps of 1 week to 4 months, and 3-60 days after the last reading): 57-78% landed within ±1 error
+  // and 93-99% within ±2, against 68% and 95% expected.
+  const MODEL_MIN_READINGS = 8;
+  const TRACKING_DAYS = 3.5; // a moment counts as "tracking" when a reading is within this many days
+  const MODEL_MAX_GRID_POINTS = 1200;
+  const BAND_WINDOW_DAYS = 30;
+  const BAND_PRIOR_READINGS = 2;
+  /* Previous gap widening, by days from the nearest reading (one reading reset it fully), kept to come back to:
+  // Extra spread per day away from the nearest reading (beyond TRACKING_DAYS), as a share of the
+  // readings' overall mean square distance from the trend. Hidden-reading tests on the weight history
+  // fitted 0.014 (maximum likelihood); this is double that, to widen more in gaps while staying
+  // accurate (68-75% of hidden readings within ±1, 95-99% within ±2). About ±0.5 kg extra after
+  // 30 days without readings. At 4x (0.056) the band overstates the error (82% within ±1 in long gaps).
+  const BAND_GAP_GROWTH = 0.028;
+  */
+
+  // Reading coverage at a moment: a Gaussian-weighted count of readings around it (BAND_COVERAGE_DAYS
+  // wide). Steady tracking gives BAND_FULL_READINGS or more; a lone reading gives about 1, so it only
+  // partly brings the band back. Both the band's extra widening and its fade go by coverage.
+  const BAND_COVERAGE_DAYS = 7;
+  const BAND_FULL_READINGS = 3;
+  // Widening: coverage is turned into "days without readings" (how far from a full run of readings
+  // you'd have to be to see this little coverage; about the real gap once far from any reading), and
+  // the band gets extra variance BAND_GAP_GROWTH × (readings' overall mean square from the trend)
+  // per such day. Hidden-reading tests on the weight history fitted 0.010 (maximum likelihood);
+  // 0.056 is set on purpose to widen more, so in long gaps the band overstates the error a little
+  // (75-83% of hidden readings within ±1 instead of 68%; 96-100% within ±2).
+  const BAND_GAP_GROWTH = 0.056;
+
+  // 4x4 matrices as flat arrays of 16, row by row
+  const matMul = (A, B) => {
+    const C = new Array(16).fill(0);
+    for (let i = 0; i < 4; i++) for (let k = 0; k < 4; k++) {
+      const a = A[i * 4 + k];
+      if (a) for (let j = 0; j < 4; j++) C[i * 4 + j] += a * B[k * 4 + j];
+    }
+    return C;
+  };
+  const matT = (A) => A.map((_, n) => A[(n % 4) * 4 + Math.floor(n / 4)]);
+  const matAdd = (A, B, sign = 1) => A.map((a, n) => a + sign * B[n]);
+  const matVec = (A, v) => [0, 1, 2, 3].map((i) => A[i * 4] * v[0] + A[i * 4 + 1] * v[1] + A[i * 4 + 2] * v[2] + A[i * 4 + 3] * v[3]);
+  function matInverse(M) {
+    const A = [0, 1, 2, 3].map((i) => [...M.slice(i * 4, i * 4 + 4), ...[0, 1, 2, 3].map((j) => (i === j ? 1 : 0))]);
+    for (let c = 0; c < 4; c++) {
+      let pivot = c;
+      for (let r = c + 1; r < 4; r++) if (Math.abs(A[r][c]) > Math.abs(A[pivot][c])) pivot = r;
+      [A[c], A[pivot]] = [A[pivot], A[c]];
+      const p = A[c][c] || 1e-12;
+      for (let j = 0; j < 8; j++) A[c][j] /= p;
+      for (let r = 0; r < 4; r++) if (r !== c && A[r][c]) {
+        const f = A[r][c];
+        for (let j = 0; j < 8; j++) A[r][j] -= f * A[c][j];
+      }
+    }
+    return A.flatMap((row) => row.slice(4));
+  }
+
+  // State: [trend level, trend slope per day, swing, swing slope]. A reading sees level + swing.
+  function modelTransition(d, { q, s2, ell }) {
+    const lam = Math.sqrt(3) / ell;
+    const e = Math.exp(-lam * d);
+    const p00 = e * (1 + lam * d), p01 = e * d, p10 = -e * lam * lam * d, p11 = e * (1 - lam * d);
+    const v0 = s2, v1 = lam * lam * s2; // the swing's long-run variance (and its slope's)
+    return {
+      F: [1, d, 0, 0, 0, 1, 0, 0, 0, 0, p00, p01, 0, 0, p10, p11],
+      Q: [
+        q * d ** 3 / 3, q * d ** 2 / 2, 0, 0,
+        q * d ** 2 / 2, q * d, 0, 0,
+        0, 0, v0 - (p00 * p00 * v0 + p01 * p01 * v1), -(p00 * p10 * v0 + p01 * p11 * v1),
+        0, 0, -(p00 * p10 * v0 + p01 * p11 * v1), v1 - (p10 * p10 * v0 + p11 * p11 * v1)
+      ]
+    };
+  }
+
+  // obs: [{ t (days), y }] sorted by t; times: extra moments (days) to estimate at
+  function runFilter(obs, times, params, keepSteps) {
+    const events = obs.map((o) => ({ t: o.t, y: o.y })).concat(times.map((t) => ({ t, y: null })));
+    events.sort((a, b) => a.t - b.t || (a.y === null) - (b.y === null));
+    const big = 1e6;
+    const lam = Math.sqrt(3) / params.ell;
+    let m = [obs[0].y, 0, 0, 0];
+    let P = [big, 0, 0, 0, 0, big, 0, 0, 0, 0, params.s2, 0, 0, 0, 0, lam * lam * params.s2];
+    let lastT = events[0].t;
+    let logLik = 0;
+    let seen = 0;
+    const steps = [];
+    events.forEach((event) => {
+      const d = event.t - lastT;
+      lastT = event.t;
+      const { F, Q } = modelTransition(d, params);
+      const mp = matVec(F, m);
+      const Pp = matAdd(matMul(matMul(F, P), matT(F)), Q);
+      let mf = mp;
+      let Pf = Pp;
+      if (event.y !== null) {
+        const PH = [0, 1, 2, 3].map((i) => Pp[i * 4] + Pp[i * 4 + 2]);
+        const S = PH[0] + PH[2] + params.r;
+        const innovation = event.y - (mp[0] + mp[2]);
+        const K = PH.map((x) => x / S);
+        mf = mp.map((x, i) => x + K[i] * innovation);
+        Pf = Pp.map((x, n) => x - K[Math.floor(n / 4)] * PH[n % 4]);
+        seen++;
+        // The first two readings only pin down the starting level and slope
+        if (seen > 2) logLik -= 0.5 * (Math.log(2 * Math.PI * S) + (innovation * innovation) / S);
+      }
+      if (keepSteps) steps.push({ t: event.t, y: event.y, F, mp, Pp, mf, Pf });
+      m = mf;
+      P = Pf;
+    });
+    return { steps, logLik };
+  }
+
+  // Rauch-Tung-Striebel smoother: lets later readings inform earlier moments too
+  function smoothSteps(steps) {
+    const out = new Array(steps.length);
+    const lastStep = steps[steps.length - 1];
+    out[steps.length - 1] = { t: lastStep.t, y: lastStep.y, m: lastStep.mf, P: lastStep.Pf };
+    for (let i = steps.length - 2; i >= 0; i--) {
+      const step = steps[i];
+      const next = steps[i + 1];
+      const C = matMul(matMul(step.Pf, matT(next.F)), matInverse(next.Pp));
+      const shift = matVec(C, out[i + 1].m.map((x, j) => x - next.mp[j]));
+      out[i] = {
+        t: step.t,
+        y: step.y,
+        m: step.mf.map((x, k) => x + shift[k]),
+        P: matAdd(step.Pf, matMul(matMul(C, matAdd(out[i + 1].P, next.Pp, -1)), matT(C)))
+      };
+    }
+    return out;
+  }
+
+  // Maximum likelihood: try a spread of starting guesses, then refine the best few
+  function fitModel(obs) {
+    const ys = obs.map((o) => o.y);
+    const mean = ys.reduce((a, b) => a + b, 0) / ys.length;
+    const variance = Math.max(1e-6, ys.reduce((a, b) => a + (b - mean) ** 2, 0) / ys.length);
+    // Searched in log10 units, relative to the readings' overall variance so any unit works
+    const toParams = ([lq, ls, ll, lr]) => ({ q: variance * 10 ** lq, s2: variance * 10 ** ls, ell: 10 ** ll, r: variance * 10 ** lr });
+    const score = (x) => {
+      const value = runFilter(obs, [], toParams(x), false).logLik;
+      return Number.isFinite(value) ? value : -Infinity;
+    };
+    const starts = [];
+    for (const lq of [-9, -7, -5]) for (const ls of [-2.5, -1.5, -0.5]) for (const ll of [0.25, 0.75, 1.25, 1.75]) for (const lr of [-2.5, -1.5]) {
+      const x = [lq, ls, ll, lr];
+      starts.push({ x, value: score(x) });
+    }
+    starts.sort((a, b) => b.value - a.value);
+    let best = null;
+    starts.slice(0, 3).forEach((start) => {
+      let current = start;
+      let stepSize = 0.5;
+      while (stepSize > 0.03) {
+        let improved = false;
+        for (let k = 0; k < 4; k++) for (const sign of [1, -1]) {
+          const x = current.x.slice();
+          x[k] += sign * stepSize;
+          if (k === 2) x[k] = Math.min(2.2, Math.max(-0.5, x[k])); // swings fade over 0.3 to 160 days
+          const value = score(x);
+          if (value > current.value + 1e-9) { current = { x, value }; improved = true; }
+        }
+        if (!improved) stepSize /= 2;
+      }
+      if (!best || current.value > best.value) best = current;
+    });
+    return toParams(best.x);
+  }
+
+  // Fitting takes a moment, so it's redone only when the readings change
+  let modelCache = { key: '', params: null };
+
+  // Returns null with too few readings; otherwise the fitted parts and an estimate for each
+  // moment from the first reading to now: { x, trend, sd (band), trendSd, slope, slopeSd, prev, next }
+  function buildModel(entries) {
+    const obs = entries
+      .map((entry) => ({ t: (entry.time || toTime(entry.date)) / DAY_MS, y: entry.value }))
+      .sort((a, b) => a.t - b.t);
+    if (obs.length < MODEL_MIN_READINGS) return null;
+    const key = `${selectedId}|${obs.map((o) => `${o.t}:${o.y}`).join(',')}`;
+    if (modelCache.key !== key) modelCache = { key, params: fitModel(obs) };
+    const { params } = modelCache;
+
+    const start = obs[0].t;
+    const end = Math.max(obs[obs.length - 1].t, Date.now() / DAY_MS);
+    const step = Math.max(1, (end - start) / MODEL_MAX_GRID_POINTS);
+    const times = [];
+    for (let t = start; t < end; t += step) times.push(t);
+    times.push(end);
+
+    const smoothed = smoothSteps(runFilter(obs, times, params, true).steps);
+    // Error band, centred on the smooth trend. Its width combines:
+    // - how far readings sit from the trend around then: a Gaussian-weighted (BAND_WINDOW_DAYS)
+    //   mean square of the readings' distances from the trend, pulled towards the overall value
+    //   where few readings are nearby (as if BAND_PRIOR_READINGS more were at the overall value)
+    // - the trend's own uncertainty, which grows across gaps with no readings
+    // - an extra term that grows where few readings are nearby (BAND_GAP_GROWTH, see there for how
+    //   accurate it is)
+    const residuals = smoothed.filter((state) => state.y !== null).map((state) => ({ t: state.t, square: (state.y - state.m[0]) ** 2 }));
+    const overallSquare = residuals.reduce((sum, item) => sum + item.square, 0) / residuals.length;
+    const localSquare = (t) => {
+      let weightSum = 0;
+      let squareSum = 0;
+      residuals.forEach((item) => {
+        const dx = (item.t - t) / BAND_WINDOW_DAYS;
+        const weight = Math.exp(-0.5 * dx * dx);
+        weightSum += weight;
+        squareSum += weight * item.square;
+      });
+      return (squareSum + BAND_PRIOR_READINGS * overallSquare) / (weightSum + BAND_PRIOR_READINGS);
+    };
+
+    const readingTimes = obs.map((o) => o.t);
+    let nextIndex = 0;
+    const estimates = smoothed
+      .filter((state) => state.y === null)
+      .map(({ t, m, P }) => {
+        while (nextIndex < readingTimes.length && readingTimes[nextIndex] < t) nextIndex++;
+        const trendVariance = Math.max(0, P[0]);
+        // Previous: days from the nearest reading
+        // const nearestReading = Math.min(...[readingTimes[nextIndex - 1], readingTimes[nextIndex]].filter((time) => time !== undefined).map((time) => Math.abs(time - t)));
+        // const daysAway = Math.max(0, nearestReading - TRACKING_DAYS);
+        const coverage = readingTimes.reduce((sum, time) => sum + Math.exp(-0.5 * ((time - t) / BAND_COVERAGE_DAYS) ** 2), 0);
+        // Days equivalent: BAND_COVERAGE_DAYS × √(2 ln(full / coverage)), with the cut-off at full
+        // coverage rounded off (a soft maximum) so the band's edge has no corner there
+        const shortfall = Math.log(BAND_FULL_READINGS / Math.max(coverage, 1e-300));
+        const softShortfall = shortfall > 20 ? shortfall : Math.log1p(Math.exp(3 * shortfall)) / 3;
+        const daysAway = BAND_COVERAGE_DAYS * Math.sqrt(2 * softShortfall);
+        return {
+          x: t * DAY_MS,
+          coverage,
+          trend: m[0],
+          sd: Math.sqrt(trendVariance + localSquare(t) + BAND_GAP_GROWTH * overallSquare * daysAway),
+          trendSd: Math.sqrt(trendVariance),
+          slope: m[1],
+          slopeSd: Math.sqrt(Math.max(0, P[5])),
+          prev: nextIndex > 0 ? readingTimes[nextIndex - 1] * DAY_MS : null,
+          next: nextIndex < readingTimes.length ? readingTimes[nextIndex] * DAY_MS : null
+        };
+      });
+    return { params, estimates, count: obs.length, scatter: Math.sqrt(overallSquare) };
+  }
+
+  const isTracking = (point) => [point.prev, point.next].some((time) => time !== null && Math.abs(time - point.x) <= TRACKING_DAYS * DAY_MS);
+
+  // Numbers beside the chart: the estimate and its error now (or at the date under the pointer),
+  // the typical error while tracking and while not, and how much readings vary
+  function renderStats(metric) {
+    if (!statsPanel) return;
+    const count = sortedEntries(selectedId).length;
+    if (!model) {
+      statsPanel.innerHTML = count
+        ? `<p class="bio-stat-hint">The estimate and its error appear once there are ${MODEL_MIN_READINGS} readings (${count} so far).</p>`
+        : '';
+      return;
+    }
+    const unit = metric.unit ? ` ${escapeHtml(metric.unit)}` : '';
+    const value = (number) => escapeHtml(number.toFixed(1));
+    const error = (number) => escapeHtml(number < 1 ? number.toFixed(2) : number.toFixed(1));
+    const dayCount = (ms) => {
+      const daysApart = ms / DAY_MS;
+      if (daysApart < 1) return `${Math.max(1, Math.round(daysApart * 24))} h`;
+      const rounded = Math.round(daysApart);
+      return `${rounded} day${rounded === 1 ? '' : 's'}`;
+    };
+    const dateLabel = (time) => new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+    const pointBlock = (point, heading) => {
+      let status;
+      if (isTracking(point)) {
+        const nearest = Math.min(...[point.prev, point.next].filter((time) => time !== null).map((time) => Math.abs(time - point.x)));
+        status = `<div class="bio-stat-status is-tracking">Tracking · nearest reading ${nearest < DAY_MS / 24 ? 'at this time' : `${dayCount(nearest)} away`}</div>`;
+      } else {
+        const parts = [];
+        if (point.prev !== null) parts.push(`${dayCount(point.x - point.prev)} since last reading`);
+        if (point.next !== null) parts.push(`${dayCount(point.next - point.x)} ${point.prev === null ? 'before first reading' : 'until next'}`);
+        status = `<div class="bio-stat-status is-gap">Not tracking · ${parts.join(', ')}</div>`;
+      }
+      const perWeek = point.slope * 7;
+      return `
+        <div class="bio-stat-block">
+          <div class="bio-stat-heading">${escapeHtml(heading)}</div>
+          <div class="bio-stat-value">${value(point.trend)} <small>± ${error(point.sd)}${unit}</small></div>
+          ${status}
+          <div class="bio-stat-line">Trend line itself ± ${error(point.trendSd)}${unit}</div>
+          <div class="bio-stat-line">Changing ${perWeek >= 0 ? '+' : '−'}${error(Math.abs(perWeek))} ± ${error(point.slopeSd * 7)}${unit}/week</div>
+        </div>`;
+    };
+
+    const median = (list) => {
+      if (!list.length) return null;
+      const sorted = list.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)];
+    };
+    const trackedErrors = shown.filter(isTracking).map((p) => p.sd);
+    const gapErrors = shown.filter((p) => !isTracking(p)).map((p) => p.sd);
+    const now = model.estimates[model.estimates.length - 1];
+
+    statsPanel.innerHTML = `
+      ${pointBlock(now, `Now · ${dateLabel(now.x)}`)}
+      ${hovered && hovered !== now ? pointBlock(hovered, `At pointer · ${dateLabel(hovered.x)}`) : '<p class="bio-stat-hint">Point at the chart for any date.</p>'}
+      <div class="bio-stat-block">
+        <div class="bio-stat-heading">Error in this view</div>
+        <dl class="bio-stat-list">
+          <dt>While tracking</dt><dd>${trackedErrors.length ? `± ${error(median(trackedErrors))}${unit} typical<br>± ${error(Math.max(...trackedErrors))}${unit} at most` : '—'}</dd>
+          <dt>While not tracking</dt><dd>${gapErrors.length ? `± ${error(median(gapErrors))}${unit} typical<br>± ${error(Math.max(...gapErrors))}${unit} at most` : '—'}</dd>
+        </dl>
+      </div>
+      <div class="bio-stat-block">
+        <div class="bio-stat-heading">Readings around the trend</div>
+        <dl class="bio-stat-list">
+          <dt>All time</dt><dd>± ${error(model.scatter)}${unit}</dd>
+        </dl>
+      </div>
+      <p class="bio-stat-hint">± is one standard deviation: about 2 in 3 readings land within it, 19 in 20 within double. It grows the longer you go without a reading. Tracking means a reading within ${TRACKING_DAYS} days.</p>`;
+  }
+
+  // Previous fade, by days from the nearest reading (one reading brought it back fully):
+  // // The error band fades the further it is from a reading: full strength within TRACKING_DAYS,
+  // // then halving about every BAND_FADE_HALF_DAYS, down to a faint floor so it never quite vanishes
+  // const BAND_FADE_HALF_DAYS = 10;
+  // The error band fades with reading coverage (see BAND_COVERAGE_DAYS): full strength at
+  // BAND_FULL_READINGS or more, a third for a lone reading, down to a faint floor in long gaps
+  const AXIS_FUTURE_SHARE = 0.03;
+  const BAND_FADE_FLOOR = 0.06;
+  const BAND_FADE_MAX_STOPS = 300;
+
+  function bandColor(chartInstance, baseAlpha) {
+    const solid = `rgba(220, 0, 0, ${baseAlpha})`;
+    const area = chartInstance.chartArea;
+    const xScale = chartInstance.scales?.x;
+    if (!area || !xScale || !shown.length || area.right <= area.left) return solid;
+    const gradient = chartInstance.ctx.createLinearGradient(area.left, 0, area.right, 0);
+    const every = Math.max(1, Math.ceil(shown.length / BAND_FADE_MAX_STOPS));
+    let lastOffset = -1;
+    shown.forEach((point, i) => {
+      if (i % every && i !== shown.length - 1) return;
+      const offset = (xScale.getPixelForValue(point.x) - area.left) / (area.right - area.left);
+      if (offset < 0 || offset > 1 || offset <= lastOffset) return;
+      lastOffset = offset;
+      // Previous:
+      // const nearest = Math.min(...[point.prev, point.next].filter((time) => time !== null).map((time) => Math.abs(time - point.x)));
+      // const daysAway = Math.max(0, nearest / DAY_MS - TRACKING_DAYS);
+      // const strength = Math.max(BAND_FADE_FLOOR, 0.5 ** (daysAway / BAND_FADE_HALF_DAYS));
+      const strength = Math.max(BAND_FADE_FLOOR, Math.min(1, point.coverage / BAND_FULL_READINGS));
+      gradient.addColorStop(offset, `rgba(220, 0, 0, ${(baseAlpha * strength).toFixed(3)})`);
+    });
+    return lastOffset < 0 ? solid : gradient;
+  }
 
   function renderChart(metric, entries) {
     // With no readings the chart still shows, empty, over the zoom period (or the last month)
@@ -188,10 +627,28 @@
       showLine: false,
       fill: false
     }];
-    if (showLineBox.checked && points.length > 1) {
+    /* Previous datasets for the 14-day Gaussian trend and its spread band, kept to come back to:
+    const trend = points.length > 1 ? trendLine(points) : [];
+    if (showSpreadBox.checked && trend.length) {
+      // ±1 standard deviation band; the lower edge fills up to the upper one
+      const edge = (sign) => trend.map((p) => ({ x: p.x, y: p.sd === null ? null : p.y + sign * p.sd }));
+      const bandStyle = {
+        borderColor: 'rgba(220, 0, 0, 0.35)',
+        borderWidth: 1,
+        borderDash: [4, 3],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        spanGaps: false,
+        tension: 0.3,
+        cubicInterpolationMode: 'monotone'
+      };
+      datasets.push({ ...bandStyle, label: 'Spread (+1 SD)', data: edge(1), fill: false });
+      datasets.push({ ...bandStyle, label: 'Spread (−1 SD)', data: edge(-1), fill: '-1', backgroundColor: 'rgba(220, 0, 0, 0.08)' });
+    }
+    if (showLineBox.checked && trend.length) {
       datasets.push({
         label: 'Trend',
-        data: trendLine(points),
+        data: trend,
         borderColor: 'red',
         borderWidth: 2,
         pointRadius: 0,
@@ -201,12 +658,70 @@
         cubicInterpolationMode: 'monotone'
       });
     }
+    */
 
+    // Model estimates within the zoom period (the model itself always uses every reading)
+    model = buildModel(entries);
+    const days = ZOOM_DAYS[zoomSelect.value];
+    const viewStart = days ? Date.now() - days * DAY_MS : (points.length ? points[0].x : emptyStart);
+    shown = model ? model.estimates.filter((p) => p.x >= viewStart) : [];
+    const lineStyle = { pointRadius: 0, pointHitRadius: 0, tension: 0, fill: false };
+    /* Previous bands, centred on the trend + swing estimate (followed the readings too closely), kept to come back to:
+    if (showSpreadBox.checked && shown.length) {
+      // Light band: where a reading would land (±1 SD). Dark band: the estimate's own error (±1 SD).
+      // Each lower edge fills up to the upper edge just before it.
+      const edge = (key, sign) => shown.map((p) => ({ x: p.x, y: p.estimate + sign * p[key] }));
+      const edgeStyle = { ...lineStyle, borderColor: 'rgba(220, 0, 0, 0.25)', borderWidth: 1, borderDash: [4, 3] };
+      datasets.push({ ...edgeStyle, label: 'Reading range high', data: edge('readSd', 1) });
+      datasets.push({ ...edgeStyle, label: 'Reading range low', data: edge('readSd', -1), fill: '-1', backgroundColor: 'rgba(220, 0, 0, 0.07)' });
+      datasets.push({ ...lineStyle, label: 'Error high', data: edge('sd', 1), borderWidth: 0 });
+      datasets.push({ ...lineStyle, label: 'Error low', data: edge('sd', -1), borderWidth: 0, fill: '-1', backgroundColor: 'rgba(220, 0, 0, 0.16)' });
+      datasets.push({ ...lineStyle, label: 'Estimate', data: shown.map((p) => ({ x: p.x, y: p.estimate })), borderColor: 'rgba(160, 0, 0, 0.7)', borderWidth: 1 });
+    }
+    */
+    if (showSpreadBox.checked && shown.length) {
+      // ±1 SD band around the trend; the lower edge fills up to the upper one.
+      // It widens through gaps (the trend gets less certain) and fades with time since a reading.
+      const edge = (sign) => shown.map((p) => ({ x: p.x, y: p.trend + sign * p.sd }));
+      const edgeStyle = { ...lineStyle, borderColor: (context) => bandColor(context.chart, 0.3), borderWidth: 1, borderDash: [4, 3] };
+      datasets.push({ ...edgeStyle, label: 'Error high', data: edge(1) });
+      datasets.push({ ...edgeStyle, label: 'Error low', data: edge(-1), fill: '-1', backgroundColor: (context) => bandColor(context.chart, 0.1) });
+    }
+    if (showLineBox.checked && shown.length) {
+      datasets.push({ ...lineStyle, label: 'Trend', data: shown.map((p) => ({ x: p.x, y: p.trend })), borderColor: 'red', borderWidth: 2 });
+    } else if (showLineBox.checked && !model && points.length > 1) {
+      // Too few readings to fit the model: just join them up
+      datasets.push({ ...lineStyle, label: 'Trend', data: points, borderColor: 'red', borderWidth: 2 });
+    }
+    hovered = null;
+    renderStats(metric);
+
+    // With the model the axis runs on to now, so the estimate covers time since the last reading.
+    // The right-hand AXIS_FUTURE_SHARE of the axis is left empty, for the future.
+    const axisMin = shown.length ? Math.max(viewStart, shown[0].x) : (points.length ? points[0].x : emptyStart);
+    const dataEnd = shown.length ? shown[shown.length - 1].x : (points.length ? points[points.length - 1].x : emptyEnd);
+    const axisMax = dataEnd + (dataEnd - axisMin) * (AXIS_FUTURE_SHARE / (1 - AXIS_FUTURE_SHARE));
     const formatTooltipDate = (time) => new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     const options = {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
+      // The stats panel follows the pointer: the model's estimate and error at that date
+      onHover: (event, elements, chartInstance) => {
+        if (!shown.length || !chartInstance.scales?.x) return;
+        const time = chartInstance.scales.x.getValueForPixel(event.x);
+        let low = 0;
+        let high = shown.length - 1;
+        while (low < high) {
+          const mid = (low + high) >> 1;
+          if (shown[mid].x < time) low = mid + 1; else high = mid;
+        }
+        const nearest = low > 0 && Math.abs(shown[low - 1].x - time) < Math.abs(shown[low].x - time) ? shown[low - 1] : shown[low];
+        if (nearest !== hovered) {
+          hovered = nearest;
+          renderStats(metric);
+        }
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -217,8 +732,8 @@
       scales: {
         x: {
           type: 'time',
-          min: points.length ? points[0].x : emptyStart,
-          max: points.length ? points[points.length - 1].x : emptyEnd,
+          min: axisMin,
+          max: axisMax,
           time: { unit: 'day', displayFormats: { day: 'dd MMM yyyy' } },
           ticks: { autoSkip: true, maxTicksLimit: 8 },
           title: { display: true, text: 'Date' }
@@ -383,6 +898,15 @@
   }));
   showPointsBox.addEventListener('change', () => onChartToggle(showPointsBox, showLineBox));
   showLineBox.addEventListener('change', () => onChartToggle(showLineBox, showPointsBox));
+  chartCanvas.addEventListener('mouseleave', () => {
+    if (!hovered) return;
+    hovered = null;
+    renderStats(metrics[selectedId] || { name: '', unit: '' });
+  });
+  showSpreadBox.addEventListener('change', () => {
+    render();
+    saveSettings();
+  });
   zoomSelect.addEventListener('change', () => {
     render();
     saveSettings();

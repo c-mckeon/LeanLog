@@ -263,13 +263,21 @@ function updateVolumeViewButtons() {
   });
 }
 
+// The month of the first workout ever ("YYYY-MM"), set when workouts load; the Overview doesn't
+// go back before it, so a new user doesn't see a year of empty months
+let firstWorkoutMonthKey = null;
+
+// Overview columns: up to 12 months ending at the chosen one, starting no earlier than the first workout
 function getCoverageMonthKeys() {
   const months = [];
   let year = currentVolumeYear;
   let month = currentVolumeMonth;
 
   for (let index = 0; index < 12; index += 1) {
-    months.push(getVolumeTargetMonthKey(year, month));
+    const key = getVolumeTargetMonthKey(year, month);
+    // With no workouts (or before they load), just the chosen month
+    if (index > 0 && (!firstWorkoutMonthKey || key < firstWorkoutMonthKey)) break;
+    months.push(key);
     month -= 1;
     if (month < 0) {
       month = 11;
@@ -413,9 +421,12 @@ function loadVolumeData() {
     const yearStart = new Date(currentVolumeYear, 0, 1);
     const yearEnd = new Date(currentVolumeYear, 11, 31, 23, 59, 59, 999);
 
+    firstWorkoutMonthKey = null;
     Object.values(workouts).forEach(workout => {
       const workoutDate = parseWorkoutDate(workout);
       if (!workoutDate) return;
+      const workoutMonthKey = getVolumeTargetMonthKey(workoutDate.getFullYear(), workoutDate.getMonth());
+      if (!firstWorkoutMonthKey || workoutMonthKey < firstWorkoutMonthKey) firstWorkoutMonthKey = workoutMonthKey;
 
       let includeWorkout = false;
       if (currentVolumeView === 'monthly' || currentVolumeView === 'sofar') {
@@ -788,6 +799,14 @@ function initVolumeEvents() {
     });
   }
 
+  // Changing month keeps the chosen view. Only "Targets" adapts: it counts the target so far
+  // in the current month ('sofar') and the whole target in other months ('monthly').
+  function keepVolumeViewForMonth() {
+    if (currentVolumeView !== 'sofar' && currentVolumeView !== 'monthly') return;
+    const isCurrentMonth = new Date().getFullYear() === currentVolumeYear && new Date().getMonth() === currentVolumeMonth;
+    currentVolumeView = isCurrentMonth ? 'sofar' : 'monthly';
+  }
+
   if (volumePrevMonthButton) {
     volumePrevMonthButton.addEventListener('click', () => {
       currentVolumeMonth -= 1;
@@ -795,11 +814,7 @@ function initVolumeEvents() {
         currentVolumeMonth = 11;
         currentVolumeYear -= 1;
       }
-      if (new Date().getFullYear() === currentVolumeYear && new Date().getMonth() === currentVolumeMonth) {
-        currentVolumeView = 'sofar';
-      } else {
-        currentVolumeView = 'monthly';
-      }
+      keepVolumeViewForMonth();
       updateVolumeViewButtons();
       loadVolumeData();
     });
@@ -812,11 +827,7 @@ function initVolumeEvents() {
         currentVolumeMonth = 0;
         currentVolumeYear += 1;
       }
-      if (new Date().getFullYear() === currentVolumeYear && new Date().getMonth() === currentVolumeMonth) {
-        currentVolumeView = 'sofar';
-      } else {
-        currentVolumeView = 'monthly';
-      }
+      keepVolumeViewForMonth();
       updateVolumeViewButtons();
       loadVolumeData();
     });

@@ -1,9 +1,20 @@
-// Bio: any body measurement the user wants to log as numbers over time (weight by default).
-// Data lives under bio/: metrics/{id} = { name, unit }, entries/{metricId}/{entryId} = { date, value }.
+// Metrics tab (named "bio" in code and data): any body measurement the user wants to log as numbers
+// over time (weight by default). Data lives under bio/: metrics/{id} = { name, unit },
+// entries/{metricId}/{entryId} = { date, value }.
 // Chart display choices (points and/or trend line, zoom period, selected measurement) live in settings/bio.
 (function () {
   const DEFAULT_METRICS = { weight: { name: 'Weight', unit: 'kg' } };
   const CHART_COLOR = '#176b45';
+  // Points, trend line and error band colours, unless the measurement has its own (metrics/{id}.pointColor / .lineColor / .bandColor)
+  const DEFAULT_POINT_COLOR = '#000000';
+  const DEFAULT_LINE_COLOR = '#ff0000';
+  const DEFAULT_BAND_COLOR = '#dc0000';
+  const pointColorOf = (metric) => (/^#[0-9a-f]{6}$/i.test(metric?.pointColor || '') ? metric.pointColor : DEFAULT_POINT_COLOR);
+  const lineColorOf = (metric) => (/^#[0-9a-f]{6}$/i.test(metric?.lineColor || '') ? metric.lineColor : DEFAULT_LINE_COLOR);
+  const bandColorOf = (metric) => (/^#[0-9a-f]{6}$/i.test(metric?.bandColor || '') ? metric.bandColor : DEFAULT_BAND_COLOR);
+  // Chart.js draws lower 'order' on top; everything else is 0, so this puts the trend over the dots and band
+  const TREND_ORDER = -1;
+  const hexToRgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ');
 
   const area = document.getElementById('bioarea');
   const tab = document.getElementById('toggleBioBtn');
@@ -17,15 +28,26 @@
   const showPointsBox = el('bioShowPoints');
   const showLineBox = el('bioShowLine');
   const showSpreadBox = el('bioShowSpread');
+  // Each Metric remembers whether its points, trend and error are shown (metrics/{id}.showPoints / ...)
+  const VISIBILITY = [[showPointsBox, 'showPoints'], [showLineBox, 'showLine'], [showSpreadBox, 'showSpread']];
+  const visibilityDefaults = { showPoints: true, showLine: true, showSpread: true };
+  const visibleOf = (metric, key) => (typeof metric?.[key] === 'boolean' ? metric[key] : visibilityDefaults[key]);
+  const pointColorInput = el('bioPointColor');
+  const lineColorInput = el('bioLineColor');
+  const bandColorInput = el('bioBandColor');
   const zoomSelect = el('bioZoomSelect');
   const dateInput = el('bioEntryDate');
   const dateToggle = el('bioDateToggle');
   const valueInput = el('bioEntryValue');
   const saveEntryBtn = el('bioSaveEntryBtn');
+  const openEntryBtn = el('bioOpenEntryBtn');
+  const entryRow = el('bioEntryRow');
   const chartCanvas = el('bioChart');
   const statsPanel = el('bioStats');
   const emptyHint = el('bioEmpty');
   const entryList = el('bioEntryList');
+  const entriesBox = el('bioEntries');
+  const entryCount = el('bioEntryCount');
 
   let metrics = {};
   let metricsSaved = false; // false while only the built-in defaults exist (nothing stored yet)
@@ -35,6 +57,7 @@
   let model = null; // fitted trend and error model for the selected measurement (null with too few readings)
   let shown = []; // the model's estimates within the zoom period
   let hovered = null; // the estimate under the pointer, shown in the stats panel
+  let pinned = null; // the estimate clicked on, kept in the stats panel until clicked again
 
   const escapeHtml = (text) => (typeof escapeExerciseHtml === 'function'
     ? escapeExerciseHtml(text)
@@ -61,14 +84,11 @@
   async function saveSettings() {
     try {
       await window.database.ref('settings/bio').update({
-        showPoints: showPointsBox.checked,
-        showLine: showLineBox.checked,
-        showSpread: showSpreadBox.checked,
         zoom: zoomSelect.value,
         metric: selectedId
       });
     } catch (error) {
-      console.error('Could not save Bio settings:', error);
+      console.error('Could not save Metrics settings:', error);
     }
   }
 
@@ -80,19 +100,23 @@
       ]);
       const bio = bioSnapshot.val() || {};
       const settings = settingsSnapshot.val() || {};
-      metricsSaved = Boolean(bio.metrics && Object.keys(bio.metrics).length);
-      metrics = metricsSaved ? bio.metrics : { ...DEFAULT_METRICS };
+      // Skip any measurement without a name (e.g. a removed one left behind as null)
+      const savedMetrics = Object.fromEntries(Object.entries(bio.metrics || {})
+        .filter(([, metric]) => metric && typeof metric.name === 'string'));
+      metricsSaved = Object.keys(savedMetrics).length > 0;
+      metrics = metricsSaved ? savedMetrics : { ...DEFAULT_METRICS };
       entriesByMetric = bio.entries || {};
-      if (typeof settings.showPoints === 'boolean') showPointsBox.checked = settings.showPoints;
-      if (typeof settings.showLine === 'boolean') showLineBox.checked = settings.showLine;
-      if (typeof settings.showSpread === 'boolean') showSpreadBox.checked = settings.showSpread;
+      // Visibility used to be shared by all Metrics; it's still the default for any Metric without its own
+      VISIBILITY.forEach(([, key]) => {
+        if (typeof settings[key] === 'boolean') visibilityDefaults[key] = settings[key];
+      });
       if (settings.zoom && [...zoomSelect.options].some((option) => option.value === settings.zoom)) zoomSelect.value = settings.zoom;
-      if (!showPointsBox.checked && !showLineBox.checked) showPointsBox.checked = true;
       if (!selectedId || !metrics[selectedId]) selectedId = metrics[settings.metric] ? settings.metric : Object.keys(metrics)[0];
       render();
     } catch (error) {
-      console.error('Could not load Bio data:', error);
-      entryList.innerHTML = `<li class="exo-hint">${escapeHtml(error.message || 'Could not load your measurements.')}</li>`;
+      console.error('Could not load Metrics data:', error);
+      if (entriesBox) entriesBox.open = true; // so the error is seen
+      entryList.innerHTML = `<li class="exo-hint">${escapeHtml(error.message || 'Could not load your Measurements.')}</li>`;
     }
   }
 
@@ -113,17 +137,22 @@
     renderChips();
     const metric = metrics[selectedId] || { name: '', unit: '' };
     valueInput.placeholder = metricLabel(metric) || 'Value';
+    VISIBILITY.forEach(([box, key]) => { box.checked = visibleOf(metric, key); });
+    pointColorInput.value = pointColorOf(metric);
+    lineColorInput.value = lineColorOf(metric);
+    bandColorInput.value = bandColorOf(metric);
 
     const entries = sortedEntries(selectedId);
     const inPeriod = zoomedPoints(entries).length;
-    emptyHint.textContent = entries.length ? "No readings in this period." : "No entries yet. Add one above to start the chart.";
+    emptyHint.textContent = entries.length ? "No Measurements in this period." : "No Measurements yet. Add one to start the chart.";
     emptyHint.hidden = inPeriod > 0;
     renderChart(metric, entries);
+    if (entryCount) entryCount.textContent = `(${entries.length})`;
     entryList.innerHTML = [...entries].reverse().map((entry) => `
       <li>
         <span>${escapeHtml(formatDate(entry.date))}</span>
         <strong>${escapeHtml(entry.value)}${metric.unit ? ` ${escapeHtml(metric.unit)}` : ''}</strong>
-        <button type="button" class="btn btn-sm btn-outline-danger bio-delete-entry" data-key="${escapeHtml(entry.key)}" aria-label="Delete entry from ${escapeHtml(formatDate(entry.date))}">×</button>
+        <button type="button" class="btn btn-sm btn-outline-danger bio-delete-entry" data-key="${escapeHtml(entry.key)}" aria-label="Delete Measurement from ${escapeHtml(formatDate(entry.date))}">×</button>
       </li>`).join('');
   }
 
@@ -259,8 +288,13 @@
   // Checked on the imported weight history by hiding readings and predicting them (single readings,
   // gaps of 1 week to 4 months, and 3-60 days after the last reading): 57-78% landed within ±1 error
   // and 93-99% within ±2, against 68% and 95% expected.
-  const MODEL_MIN_READINGS = 8;
-  const TRACKING_DAYS = 3.5; // a moment counts as "tracking" when a reading is within this many days
+  const MODEL_MIN_READINGS = 5; // the trend line appears from here
+  const ERROR_MIN_READINGS = 8; // the error band and ± figures appear from here
+  // The day counts below (BAND_WINDOW_DAYS, BAND_COVERAGE_DAYS) were tuned on the
+  // weight history, about CADENCE_REFERENCE_DAYS between readings. Measurements read less often
+  // stretch them in proportion to their typical gap, so with one reading a month the band doesn't
+  // treat every day between readings as a long gap.
+  const CADENCE_REFERENCE_DAYS = 1.5;
   const MODEL_MAX_GRID_POINTS = 1200;
   const BAND_WINDOW_DAYS = 30;
   const BAND_PRIOR_READINGS = 2;
@@ -285,6 +319,27 @@
   // 0.056 is set on purpose to widen more, so in long gaps the band overstates the error a little
   // (75-83% of hidden readings within ±1 instead of 68%; 96-100% within ±2).
   const BAND_GAP_GROWTH = 0.056;
+  // What the shaded band shows. With plenty of frequent readings: where a reading would land (sd).
+  // With few or infrequent ones that is mostly the readings' own scatter, about as wide everywhere,
+  // so the band shows how sure the trend line itself is instead. Between the two it blends:
+  // by count (all trend certainty at ERROR_MIN_READINGS, all reading range at BAND_READINGS_FULL_COUNT)
+  // times by cadence (all reading range up to BAND_STRETCH_FULL × the reference gap, all trend
+  // certainty from BAND_STRETCH_NONE ×, i.e. about daily to fortnightly readings).
+  const BAND_WINDOW_SPAN_SHARE = 1 / 6;
+  // The drawn band bulges out (on that side only) to take in any reading beyond ±1 SD, plus
+  // BAND_WARP_MARGIN, easing back over about BAND_WARP_GAPS typical gaps between readings, or
+  // a share of the whole history if that's longer: BAND_WARP_SPAN_SHARE at BAND_WARP_BASE_READINGS
+  // readings, growing with √readings up to BAND_WARP_SPAN_SHARE_MAX. So the more readings, the broader
+  // and gentler the swells (a lone outlier in lots of data shouldn't make a sharp bump), while
+  // every reading still sits inside the band.
+  const BAND_WARP_GAPS = 1.5;
+  const BAND_WARP_SPAN_SHARE = 1 / 50;
+  const BAND_WARP_BASE_READINGS = 30;
+  const BAND_WARP_SPAN_SHARE_MAX = 1 / 8;
+  const BAND_WARP_MARGIN = 1.08;
+  const BAND_READINGS_FULL_COUNT = 30;
+  const BAND_STRETCH_FULL = 2;
+  const BAND_STRETCH_NONE = 10;
 
   // 4x4 matrices as flat arrays of 16, row by row
   const matMul = (A, B) => {
@@ -389,19 +444,34 @@
     return out;
   }
 
-  // Maximum likelihood: try a spread of starting guesses, then refine the best few
+  // Trend bendiness prior. With few readings the fit can't tell trend from noise and tends to give
+  // up on the trend (a straight line) or thread it through every reading. So the fit is nudged
+  // towards a trend that averages over about TREND_PRIOR_SPACINGS × the typical gap between
+  // readings. The nudge is firm at MODEL_MIN_READINGS readings and fades in proportion to the count
+  // (TREND_PRIOR_SD wide in log10 smoothing width at 5 readings, 1.5 at 150), so long histories fit
+  // on their own: on the 2-year weight history the trend's smoothing width moves 11.4 -> 11.0 days.
+  const TREND_PRIOR_SPACINGS = 0.7;
+  const TREND_PRIOR_SD = 0.05;
+
+  // Maximum likelihood (with the prior above): try a spread of starting guesses, then refine the best few
   function fitModel(obs) {
     const ys = obs.map((o) => o.y);
     const mean = ys.reduce((a, b) => a + b, 0) / ys.length;
     const variance = Math.max(1e-6, ys.reduce((a, b) => a + (b - mean) ** 2, 0) / ys.length);
+    const gaps = obs.slice(1).map((o, i) => o.t - obs[i].t).sort((a, b) => a - b);
+    const spacing = Math.max(0.05, gaps[Math.floor(gaps.length / 2)]);
+    const priorSd = TREND_PRIOR_SD * (obs.length / MODEL_MIN_READINGS);
     // Searched in log10 units, relative to the readings' overall variance so any unit works
     const toParams = ([lq, ls, ll, lr]) => ({ q: variance * 10 ** lq, s2: variance * 10 ** ls, ell: 10 ** ll, r: variance * 10 ** lr });
     const score = (x) => {
       const value = runFilter(obs, [], toParams(x), false).logLik;
-      return Number.isFinite(value) ? value : -Infinity;
+      // The trend averages over about ((swing + noise) × spacing / q)^(1/4) days, like a smoothing spline
+      const [lq, ls, , lr] = x;
+      const widthOff = (Math.log10((10 ** ls + 10 ** lr) * spacing) - lq) / 4 - Math.log10(TREND_PRIOR_SPACINGS * spacing);
+      return Number.isFinite(value) ? value - 0.5 * (widthOff / priorSd) ** 2 : -Infinity;
     };
     const starts = [];
-    for (const lq of [-9, -7, -5]) for (const ls of [-2.5, -1.5, -0.5]) for (const ll of [0.25, 0.75, 1.25, 1.75]) for (const lr of [-2.5, -1.5]) {
+    for (const lq of [-9, -7, -5, -3, -1]) for (const ls of [-2.5, -1.5, -0.5]) for (const ll of [0.25, 0.75, 1.25, 1.75]) for (const lr of [-2.5, -1.5]) {
       const x = [lq, ls, ll, lr];
       starts.push({ x, value: score(x) });
     }
@@ -430,7 +500,7 @@
   let modelCache = { key: '', params: null };
 
   // Returns null with too few readings; otherwise the fitted parts and an estimate for each
-  // moment from the first reading to now: { x, trend, sd (band), trendSd, slope, slopeSd, prev, next }
+  // moment from the first reading to now: { x, trend, sd, bandSd (the shaded band), slope, slopeSd, prev, next }
   function buildModel(entries) {
     const obs = entries
       .map((entry) => ({ t: (entry.time || toTime(entry.date)) / DAY_MS, y: entry.value }))
@@ -455,19 +525,42 @@
     // - the trend's own uncertainty, which grows across gaps with no readings
     // - an extra term that grows where few readings are nearby (BAND_GAP_GROWTH, see there for how
     //   accurate it is)
+    // All of these windows are stretched for measurements read less often (see CADENCE_REFERENCE_DAYS)
+    const gaps = obs.slice(1).map((o, i) => o.t - obs[i].t).sort((a, b) => a - b);
+    const stretch = Math.max(1, gaps[Math.floor(gaps.length / 2)] / CADENCE_REFERENCE_DAYS);
+    const coverageDays = BAND_COVERAGE_DAYS * stretch;
+    // The local window is also capped at BAND_WINDOW_SPAN_SHARE of the history, so a short or sparse
+    // history still shows calm and swinging stretches apart rather than averaging over everything
+    const bandWindowDays = Math.min(BAND_WINDOW_DAYS * stretch, Math.max(1, obs[obs.length - 1].t - obs[0].t) * BAND_WINDOW_SPAN_SHARE);
     const residuals = smoothed.filter((state) => state.y !== null).map((state) => ({ t: state.t, square: (state.y - state.m[0]) ** 2 }));
     const overallSquare = residuals.reduce((sum, item) => sum + item.square, 0) / residuals.length;
     const localSquare = (t) => {
       let weightSum = 0;
       let squareSum = 0;
       residuals.forEach((item) => {
-        const dx = (item.t - t) / BAND_WINDOW_DAYS;
+        const dx = (item.t - t) / bandWindowDays;
         const weight = Math.exp(-0.5 * dx * dx);
         weightSum += weight;
         squareSum += weight * item.square;
       });
       return (squareSum + BAND_PRIOR_READINGS * overallSquare) / (weightSum + BAND_PRIOR_READINGS);
     };
+
+    const clamp01 = (value) => Math.min(1, Math.max(0, value));
+    const readingRangeShare = clamp01((obs.length - ERROR_MIN_READINGS) / (BAND_READINGS_FULL_COUNT - ERROR_MIN_READINGS))
+      * clamp01(Math.log(BAND_STRETCH_NONE / stretch) / Math.log(BAND_STRETCH_NONE / BAND_STRETCH_FULL));
+
+    // Outlier bulges: each reading's signed distance from the trend, spread to nearby moments
+    // with a Gaussian BAND_WARP_GAPS typical gaps wide (see BAND_WARP_GAPS)
+    const warpSpanShare = Math.min(BAND_WARP_SPAN_SHARE_MAX, BAND_WARP_SPAN_SHARE * Math.sqrt(obs.length / BAND_WARP_BASE_READINGS));
+    const warpDays = Math.max(0.25, BAND_WARP_GAPS * gaps[Math.floor(gaps.length / 2)], warpSpanShare * (obs[obs.length - 1].t - obs[0].t));
+    const offsets = smoothed.filter((state) => state.y !== null).map((state) => ({ t: state.t, offset: state.y - state.m[0] }));
+    const reachAt = (t, side) => offsets.reduce((most, item) => {
+      if (item.offset * side <= 0) return most;
+      const dx = (item.t - t) / warpDays;
+      return dx * dx > 18 ? most : Math.max(most, Math.abs(item.offset) * BAND_WARP_MARGIN * Math.exp(-0.5 * dx * dx));
+    }, 0);
+    const softMax = (a, b) => (a ** 4 + b ** 4) ** 0.25;
 
     const readingTimes = obs.map((o) => o.t);
     let nextIndex = 0;
@@ -479,99 +572,206 @@
         // Previous: days from the nearest reading
         // const nearestReading = Math.min(...[readingTimes[nextIndex - 1], readingTimes[nextIndex]].filter((time) => time !== undefined).map((time) => Math.abs(time - t)));
         // const daysAway = Math.max(0, nearestReading - TRACKING_DAYS);
-        const coverage = readingTimes.reduce((sum, time) => sum + Math.exp(-0.5 * ((time - t) / BAND_COVERAGE_DAYS) ** 2), 0);
-        // Days equivalent: BAND_COVERAGE_DAYS × √(2 ln(full / coverage)), with the cut-off at full
-        // coverage rounded off (a soft maximum) so the band's edge has no corner there
+        const coverage = readingTimes.reduce((sum, time) => sum + Math.exp(-0.5 * ((time - t) / coverageDays) ** 2), 0);
+        // Days equivalent (in unstretched days): BAND_COVERAGE_DAYS × √(2 ln(full / coverage)), with
+        // the cut-off at full coverage rounded off (a soft maximum) so the band's edge has no corner there
         const shortfall = Math.log(BAND_FULL_READINGS / Math.max(coverage, 1e-300));
         const softShortfall = shortfall > 20 ? shortfall : Math.log1p(Math.exp(3 * shortfall)) / 3;
         const daysAway = BAND_COVERAGE_DAYS * Math.sqrt(2 * softShortfall);
+        const local = localSquare(t);
+        const readingVariance = local + BAND_GAP_GROWTH * overallSquare * daysAway;
+        // The trend's own uncertainty assumes one swing size throughout; scale it by how much
+        // readings swing around here compared with overall, so calm stretches get a narrower band
+        const localTrendVariance = trendVariance * (overallSquare > 0 ? local / overallSquare : 1);
+        const bandSd = Math.sqrt(localTrendVariance + readingRangeShare * readingVariance);
         return {
           x: t * DAY_MS,
           coverage,
           trend: m[0],
-          sd: Math.sqrt(trendVariance + localSquare(t) + BAND_GAP_GROWTH * overallSquare * daysAway),
-          trendSd: Math.sqrt(trendVariance),
+          sd: Math.sqrt(trendVariance + readingVariance),
+          bandSd,
+          // The drawn band's half-widths above and below, bulging to take in readings outside ±bandSd
+          bandUp: softMax(bandSd, reachAt(t, 1)),
+          bandDown: softMax(bandSd, reachAt(t, -1)),
           slope: m[1],
           slopeSd: Math.sqrt(Math.max(0, P[5])),
           prev: nextIndex > 0 ? readingTimes[nextIndex - 1] * DAY_MS : null,
           next: nextIndex < readingTimes.length ? readingTimes[nextIndex] * DAY_MS : null
         };
       });
-    return { params, estimates, count: obs.length, scatter: Math.sqrt(overallSquare) };
+    // How many readings land within ±bandSd of the trend (each checked at the nearest estimate)
+    let withinCount = 0;
+    let at = 0;
+    obs.forEach(({ t, y }) => {
+      const time = t * DAY_MS;
+      while (at < estimates.length - 1 && Math.abs(estimates[at + 1].x - time) <= Math.abs(estimates[at].x - time)) at++;
+      const point = estimates[at];
+      if (point && Math.abs(y - point.trend) <= point.bandSd) withinCount++;
+    });
+    return {
+      params,
+      estimates,
+      count: obs.length,
+      withinCount,
+      hasError: obs.length >= ERROR_MIN_READINGS,
+      readingRangeShare,
+      scatter: Math.sqrt(overallSquare) // typical distance of readings from the trend (not shown at the moment)
+    };
   }
 
-  const isTracking = (point) => [point.prev, point.next].some((time) => time !== null && Math.abs(time - point.x) <= TRACKING_DAYS * DAY_MS);
-
-  // Numbers beside the chart: the estimate and its error now (or at the date under the pointer),
-  // the typical error while tracking and while not, and how much readings vary
+  // Numbers beside the chart: the latest reading, then the trend line and its error now and at
+  // the date under the pointer (or pinned by a click). The ± matches the shaded band.
   function renderStats(metric) {
     if (!statsPanel) return;
-    const count = sortedEntries(selectedId).length;
-    if (!model) {
-      statsPanel.innerHTML = count
-        ? `<p class="bio-stat-hint">The estimate and its error appear once there are ${MODEL_MIN_READINGS} readings (${count} so far).</p>`
-        : '';
-      return;
-    }
+    const entries = sortedEntries(selectedId);
+    const count = entries.length;
     const unit = metric.unit ? ` ${escapeHtml(metric.unit)}` : '';
     const value = (number) => escapeHtml(number.toFixed(1));
     const error = (number) => escapeHtml(number < 1 ? number.toFixed(2) : number.toFixed(1));
-    const dayCount = (ms) => {
-      const daysApart = ms / DAY_MS;
-      if (daysApart < 1) return `${Math.max(1, Math.round(daysApart * 24))} h`;
-      const rounded = Math.round(daysApart);
-      return `${rounded} day${rounded === 1 ? '' : 's'}`;
-    };
     const dateLabel = (time) => new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 
-    const pointBlock = (point, heading) => {
-      let status;
-      if (isTracking(point)) {
-        const nearest = Math.min(...[point.prev, point.next].filter((time) => time !== null).map((time) => Math.abs(time - point.x)));
-        status = `<div class="bio-stat-status is-tracking">Tracking · nearest reading ${nearest < DAY_MS / 24 ? 'at this time' : `${dayCount(nearest)} away`}</div>`;
-      } else {
-        const parts = [];
-        if (point.prev !== null) parts.push(`${dayCount(point.x - point.prev)} since last reading`);
-        if (point.next !== null) parts.push(`${dayCount(point.next - point.x)} ${point.prev === null ? 'before first reading' : 'until next'}`);
-        status = `<div class="bio-stat-status is-gap">Not tracking · ${parts.join(', ')}</div>`;
-      }
-      const perWeek = point.slope * 7;
-      return `
+    const latest = entries[count - 1];
+    let latestBlock = '';
+    if (latest) {
+      const daysAgo = Math.round((toTime(today()) - toTime(latest.date)) / DAY_MS);
+      const when = daysAgo <= 0 ? 'today' : daysAgo === 1 ? 'yesterday' : `${daysAgo} days ago`;
+      latestBlock = `
         <div class="bio-stat-block">
+          <div class="bio-stat-heading">Latest Measurement · ${dateLabel(toTime(latest.date))}</div>
+          <div class="bio-stat-value">${escapeHtml(latest.value)} <small>${unit}</small></div>
+          <div class="bio-stat-line">${when}</div>
+        </div>`;
+    }
+
+    if (!model) {
+      statsPanel.innerHTML = count
+        ? `${latestBlock}<p class="bio-stat-hint">The trend appears once there are ${MODEL_MIN_READINGS} Measurements, and its error at ${ERROR_MIN_READINGS} (${count} so far).</p>`
+        : '';
+      return;
+    }
+
+    const pointBlock = (point, heading, tooltip = '') => {
+      const perWeek = point.slope * 7;
+      const change = `${perWeek >= 0 ? '+' : '−'}${error(Math.abs(perWeek))}`;
+      return `
+        <div class="bio-stat-block"${tooltip ? ` title="${escapeHtml(tooltip)}"` : ''}>
           <div class="bio-stat-heading">${escapeHtml(heading)}</div>
-          <div class="bio-stat-value">${value(point.trend)} <small>± ${error(point.sd)}${unit}</small></div>
-          ${status}
-          <div class="bio-stat-line">Trend line itself ± ${error(point.trendSd)}${unit}</div>
-          <div class="bio-stat-line">Changing ${perWeek >= 0 ? '+' : '−'}${error(Math.abs(perWeek))} ± ${error(point.slopeSd * 7)}${unit}/week</div>
+          <div class="bio-stat-value">${value(point.trend)} <small>${model.hasError ? `± ${error(point.bandSd)}` : ''}${unit}</small></div>
+          <div class="bio-stat-line">Changing ${change}${unit}/week</div>
         </div>`;
     };
 
-    const median = (list) => {
-      if (!list.length) return null;
-      const sorted = list.slice().sort((a, b) => a - b);
-      return sorted[Math.floor(sorted.length / 2)];
-    };
-    const trackedErrors = shown.filter(isTracking).map((p) => p.sd);
-    const gapErrors = shown.filter((p) => !isTracking(p)).map((p) => p.sd);
+    // Same shape as a point block, so the panel keeps its height and the page doesn't jump on hover
+    const emptyPointBlock = `
+        <div class="bio-stat-block">
+          <div class="bio-stat-heading">Trend at pointer</div>
+          <div class="bio-stat-value"><small>Point at the chart for any date</small></div>
+          <div class="bio-stat-line">Click to keep it here</div>
+        </div>`;
     const now = model.estimates[model.estimates.length - 1];
+    let atPointer = emptyPointBlock;
+    if (pinned) atPointer = pointBlock(pinned, `Trend pinned · ${dateLabel(pinned.x)}`, 'Click the chart again to release');
+    else if (hovered) atPointer = pointBlock(hovered, `Trend at pointer · ${dateLabel(hovered.x)}`);
+    const pointBlocks = `
+      ${latestBlock}
+      ${pointBlock(now, `Trend now · ${dateLabel(now.x)}`)}
+      ${atPointer}`;
 
-    statsPanel.innerHTML = `
-      ${pointBlock(now, `Now · ${dateLabel(now.x)}`)}
-      ${hovered && hovered !== now ? pointBlock(hovered, `At pointer · ${dateLabel(hovered.x)}`) : '<p class="bio-stat-hint">Point at the chart for any date.</p>'}
-      <div class="bio-stat-block">
-        <div class="bio-stat-heading">Error in this view</div>
-        <dl class="bio-stat-list">
-          <dt>While tracking</dt><dd>${trackedErrors.length ? `± ${error(median(trackedErrors))}${unit} typical<br>± ${error(Math.max(...trackedErrors))}${unit} at most` : '—'}</dd>
-          <dt>While not tracking</dt><dd>${gapErrors.length ? `± ${error(median(gapErrors))}${unit} typical<br>± ${error(Math.max(...gapErrors))}${unit} at most` : '—'}</dd>
-        </dl>
-      </div>
-      <div class="bio-stat-block">
-        <div class="bio-stat-heading">Readings around the trend</div>
-        <dl class="bio-stat-list">
-          <dt>All time</dt><dd>± ${error(model.scatter)}${unit}</dd>
-        </dl>
-      </div>
-      <p class="bio-stat-hint">± is one standard deviation: about 2 in 3 readings land within it, 19 in 20 within double. It grows the longer you go without a reading. Tracking means a reading within ${TRACKING_DAYS} days.</p>`;
+    if (!model.hasError) {
+      statsPanel.innerHTML = `${pointBlocks}
+      <p class="bio-stat-hint">The error appears once there are ${ERROR_MIN_READINGS} Measurements (${model.count} so far).</p>`;
+      return;
+    }
+
+    statsPanel.innerHTML = `${pointBlocks}
+      <p class="bio-stat-hint">± is roughly one standard deviation: ${model.withinCount} of ${model.count} Measurements land within it.</p>`;
+  }
+
+  // Empty space on each side of the chart, as a share of the axis: CHART_PAD_MAX with one
+  // reading, easing down to CHART_PAD_MIN at CHART_PAD_READINGS readings in view
+  const CHART_PAD_MAX = 0.3;
+  const CHART_PAD_MIN = 0.05;
+  const CHART_PAD_READINGS = 10;
+
+  function chartPad(readings) {
+    const progress = Math.min(1, Math.max(0, (readings - 1) / (CHART_PAD_READINGS - 1)));
+    return CHART_PAD_MAX + (CHART_PAD_MIN - CHART_PAD_MAX) * progress;
+  }
+
+  // Axis limits leaving `pad` of the axis empty beyond each end of [low, high]
+  function paddedRange(low, high, pad, fallbackSpan) {
+    const range = high - low || fallbackSpan;
+    const middle = (low + high) / 2;
+    const half = range / 2 / (1 - 2 * pad);
+    return { min: middle - half, max: middle + half };
+  }
+
+  // Date axis ticks on obvious calendar points: the finest step from CALENDAR_STEPS that leaves at
+  // most `maxTicks` ticks, each aligned to its calendar (weeks start on Mondays, 3 months on
+  // Jan/Apr/Jul/Oct, 2 years on even years, ...). Local time, so ticks sit on local midnight.
+  const TICK_LABEL_PX = 80; // room per label
+  const CALENDAR_STEPS = [
+    { unit: 'day', count: 1 }, { unit: 'day', count: 2 },
+    { unit: 'week', count: 1 }, { unit: 'week', count: 2 },
+    { unit: 'month', count: 1 }, { unit: 'month', count: 2 }, { unit: 'month', count: 3 }, { unit: 'month', count: 6 },
+    { unit: 'year', count: 1 }, { unit: 'year', count: 2 }, { unit: 'year', count: 5 }, { unit: 'year', count: 10 }
+  ];
+  const WEEK_MS = 7 * DAY_MS;
+  const MONDAY_EPOCH = new Date(2024, 0, 1).getTime(); // a Monday, so fortnights line up the same way every time
+
+  function firstCalendarTick(time, { unit, count }) {
+    const date = new Date(time);
+    if (unit === 'day' || unit === 'week') {
+      date.setHours(0, 0, 0, 0);
+      if (unit === 'week') {
+        date.setDate(date.getDate() - ((date.getDay() + 6) % 7)); // back to Monday
+        const weeks = Math.round((date.getTime() - MONDAY_EPOCH) / WEEK_MS);
+        date.setDate(date.getDate() - 7 * (((weeks % count) + count) % count));
+      } else if (count > 1) {
+        const days = Math.round((date.getTime() - MONDAY_EPOCH) / DAY_MS);
+        date.setDate(date.getDate() - (((days % count) + count) % count));
+      }
+    } else if (unit === 'month') {
+      return new Date(date.getFullYear(), date.getMonth() - (date.getMonth() % count), 1);
+    } else {
+      return new Date(date.getFullYear() - (date.getFullYear() % count), 0, 1);
+    }
+    return date;
+  }
+
+  function nextCalendarTick(date, { unit, count }) {
+    if (unit === 'day') return new Date(date.getFullYear(), date.getMonth(), date.getDate() + count);
+    if (unit === 'week') return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 7 * count);
+    if (unit === 'month') return new Date(date.getFullYear(), date.getMonth() + count, 1);
+    return new Date(date.getFullYear() + count, 0, 1);
+  }
+
+  function calendarTicks(min, max, maxTicks) {
+    const build = (step) => {
+      const ticks = [];
+      for (let date = firstCalendarTick(min, step); date.getTime() <= max && ticks.length <= maxTicks; date = nextCalendarTick(date, step)) {
+        if (date.getTime() >= min) ticks.push(date.getTime());
+      }
+      return ticks;
+    };
+    for (const step of CALENDAR_STEPS) {
+      const ticks = build(step);
+      if (ticks.length <= maxTicks) return { ...step, ticks };
+    }
+    const last = CALENDAR_STEPS[CALENDAR_STEPS.length - 1];
+    return { ...last, ticks: build(last) };
+  }
+
+  // Days and weeks: "5 Oct", months: "Oct", years: "2026"; the year is added on the first
+  // label and wherever it changes
+  function calendarTickLabel(value, index, step) {
+    const date = new Date(value);
+    if (!step || step.unit === 'year') return String(date.getFullYear());
+    const previous = index > 0 ? new Date(step.ticks[index - 1]) : null;
+    const showYear = !previous || previous.getFullYear() !== date.getFullYear();
+    const options = step.unit === 'month' ? { month: 'short' } : { day: 'numeric', month: 'short' };
+    if (showYear) options.year = 'numeric';
+    return date.toLocaleDateString('en-GB', options);
   }
 
   // Previous fade, by days from the nearest reading (one reading brought it back fully):
@@ -580,31 +780,67 @@
   // const BAND_FADE_HALF_DAYS = 10;
   // The error band fades with reading coverage (see BAND_COVERAGE_DAYS): full strength at
   // BAND_FULL_READINGS or more, a third for a lone reading, down to a faint floor in long gaps
-  const AXIS_FUTURE_SHARE = 0.03;
   const BAND_FADE_FLOOR = 0.06;
+  // Light pink fill fading gently to white towards the dashed edges: nested layers reaching these
+  // shares of the band's half-width, each BAND_LAYER_ALPHA opaque (about 0.1 in the middle third)
+  const BAND_LAYER_SHARES = [1, 0.86, 0.72, 0.58, 0.44, 0.3];
+  const BAND_LAYER_ALPHA = 0.018;
+  const BAND_EDGE_ALPHA = 0.3; // the dashed ±1 SD edge lines
   const BAND_FADE_MAX_STOPS = 300;
+  let bandPoints = []; // what the band is drawn through: { x, trend, bandSd, strength }
 
+  // Previous strength, by days from the nearest reading:
+  // const nearest = Math.min(...[point.prev, point.next].filter((time) => time !== null).map((time) => Math.abs(time - point.x)));
+  // const daysAway = Math.max(0, nearest / DAY_MS - TRACKING_DAYS);
+  // const strength = Math.max(BAND_FADE_FLOOR, 0.5 ** (daysAway / BAND_FADE_HALF_DAYS));
+  // const bandStrength = (point) => Math.max(BAND_FADE_FLOOR, Math.min(1, point.coverage / BAND_FULL_READINGS));
+  // Eased (smoothstep) between the faint floor and full strength, so the fade has no corners at either end
+  const bandStrength = (point) => {
+    const share = Math.min(1, point.coverage / BAND_FULL_READINGS);
+    return BAND_FADE_FLOOR + (1 - BAND_FADE_FLOOR) * share * share * (3 - 2 * share);
+  };
+
+  function buildBandPoints() {
+    return shown.map((p) => ({ x: p.x, trend: p.trend, up: p.bandUp, down: p.bandDown, strength: bandStrength(p) }));
+  }
+
+  // Colour fading left to right with each point's strength. Chart.js asks for it again and again,
+  // so each gradient is built once per band and chart layout, then reused.
+  let bandColorCache = new Map();
+  let bandRgb = hexToRgb(DEFAULT_BAND_COLOR); // the selected measurement's band colour, as "r, g, b"
   function bandColor(chartInstance, baseAlpha) {
-    const solid = `rgba(220, 0, 0, ${baseAlpha})`;
+    const solid = `rgba(${bandRgb}, ${baseAlpha})`;
     const area = chartInstance.chartArea;
     const xScale = chartInstance.scales?.x;
-    if (!area || !xScale || !shown.length || area.right <= area.left) return solid;
+    if (!area || !xScale || !bandPoints.length || area.right <= area.left) return solid;
+    const key = `${baseAlpha}|${area.left}|${area.right}|${xScale.min}|${xScale.max}`;
+    if (bandColorCache.has(key)) return bandColorCache.get(key);
     const gradient = chartInstance.ctx.createLinearGradient(area.left, 0, area.right, 0);
-    const every = Math.max(1, Math.ceil(shown.length / BAND_FADE_MAX_STOPS));
+    const every = Math.max(1, Math.ceil(bandPoints.length / BAND_FADE_MAX_STOPS));
     let lastOffset = -1;
-    shown.forEach((point, i) => {
-      if (i % every && i !== shown.length - 1) return;
+    bandPoints.forEach((point, i) => {
+      if (i % every && i !== bandPoints.length - 1) return;
       const offset = (xScale.getPixelForValue(point.x) - area.left) / (area.right - area.left);
       if (offset < 0 || offset > 1 || offset <= lastOffset) return;
       lastOffset = offset;
-      // Previous:
-      // const nearest = Math.min(...[point.prev, point.next].filter((time) => time !== null).map((time) => Math.abs(time - point.x)));
-      // const daysAway = Math.max(0, nearest / DAY_MS - TRACKING_DAYS);
-      // const strength = Math.max(BAND_FADE_FLOOR, 0.5 ** (daysAway / BAND_FADE_HALF_DAYS));
-      const strength = Math.max(BAND_FADE_FLOOR, Math.min(1, point.coverage / BAND_FULL_READINGS));
-      gradient.addColorStop(offset, `rgba(220, 0, 0, ${(baseAlpha * strength).toFixed(3)})`);
+      gradient.addColorStop(offset, `rgba(${bandRgb}, ${(baseAlpha * point.strength).toFixed(3)})`);
     });
-    return lastOffset < 0 ? solid : gradient;
+    const color = lastOffset < 0 ? solid : gradient;
+    bandColorCache.set(key, color);
+    return color;
+  }
+
+  // The model estimate nearest the date under an x pixel on the chart
+  function estimateAtPixel(chartInstance, pixel) {
+    if (!shown.length || !chartInstance.scales?.x) return null;
+    const time = chartInstance.scales.x.getValueForPixel(pixel);
+    let low = 0;
+    let high = shown.length - 1;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (shown[mid].x < time) low = mid + 1; else high = mid;
+    }
+    return low > 0 && Math.abs(shown[low - 1].x - time) < Math.abs(shown[low].x - time) ? shown[low - 1] : shown[low];
   }
 
   function renderChart(metric, entries) {
@@ -619,7 +855,7 @@
       data: points,
       backgroundColor: 'rgba(0, 0, 0, 0.1)',
       borderColor: 'blue',
-      pointBackgroundColor: 'black',
+      pointBackgroundColor: pointColorOf(metric),
       pointBorderColor: 'white',
       pointRadius: showPointsBox.checked ? 2 : 0,
       pointHoverRadius: showPointsBox.checked ? 4 : 0,
@@ -665,7 +901,20 @@
     const days = ZOOM_DAYS[zoomSelect.value];
     const viewStart = days ? Date.now() - days * DAY_MS : (points.length ? points[0].x : emptyStart);
     shown = model ? model.estimates.filter((p) => p.x >= viewStart) : [];
-    const lineStyle = { pointRadius: 0, pointHitRadius: 0, tension: 0, fill: false };
+    // Fixed point colours, so Chart.js doesn't work out the band's colour once per (invisible) point
+    const lineStyle = { pointRadius: 0, pointHitRadius: 0, pointBackgroundColor: 'transparent', pointBorderColor: 'transparent', tension: 0, fill: false };
+
+    // With the model the axis runs on to now, so the estimate covers time since the last reading.
+    // Each side gets chartPad() of empty space: a lot with few readings, 5% from 10 on.
+    const pad = chartPad(points.length);
+    const dataStart = shown.length ? Math.max(viewStart, shown[0].x) : (points.length ? points[0].x : emptyStart);
+    const dataEnd = shown.length ? shown[shown.length - 1].x : (points.length ? points[points.length - 1].x : emptyEnd);
+    const xRange = paddedRange(dataStart, dataEnd, pad, 2 * DAY_MS);
+    const axisMin = xRange.min;
+    const axisMax = xRange.max;
+    bandPoints = [];
+    bandColorCache = new Map();
+    bandRgb = hexToRgb(bandColorOf(metric));
     /* Previous bands, centred on the trend + swing estimate (followed the readings too closely), kept to come back to:
     if (showSpreadBox.checked && shown.length) {
       // Light band: where a reading would land (±1 SD). Dark band: the estimate's own error (±1 SD).
@@ -679,48 +928,66 @@
       datasets.push({ ...lineStyle, label: 'Estimate', data: shown.map((p) => ({ x: p.x, y: p.estimate })), borderColor: 'rgba(160, 0, 0, 0.7)', borderWidth: 1 });
     }
     */
-    if (showSpreadBox.checked && shown.length) {
-      // ±1 SD band around the trend; the lower edge fills up to the upper one.
-      // It widens through gaps (the trend gets less certain) and fades with time since a reading.
-      const edge = (sign) => shown.map((p) => ({ x: p.x, y: p.trend + sign * p.sd }));
-      const edgeStyle = { ...lineStyle, borderColor: (context) => bandColor(context.chart, 0.3), borderWidth: 1, borderDash: [4, 3] };
-      datasets.push({ ...edgeStyle, label: 'Error high', data: edge(1) });
-      datasets.push({ ...edgeStyle, label: 'Error low', data: edge(-1), fill: '-1', backgroundColor: (context) => bandColor(context.chart, 0.1) });
+    if (showSpreadBox.checked && shown.length && model.hasError) {
+      // ±1 SD band around the trend (bandSd, see BAND_READINGS_FULL_COUNT); the lower edge fills up to
+      // the upper one. It widens through gaps (the trend gets less certain) and fades with time since a reading.
+      // The fill is a few nested layers (BAND_LAYER_SHARES), so it softens just inside the dashed edges.
+      bandPoints = buildBandPoints();
+      const edge = (sign, share) => bandPoints.map((p) => ({ x: p.x, y: p.trend + sign * share * (sign > 0 ? p.up : p.down) }));
+      const layerStyle = { ...lineStyle, borderWidth: 0 };
+      BAND_LAYER_SHARES.forEach((share, layer) => {
+        datasets.push({ ...layerStyle, label: `Error high ${layer}`, data: edge(1, share) });
+        datasets.push({ ...layerStyle, label: `Error low ${layer}`, data: edge(-1, share), fill: '-1', backgroundColor: (context) => bandColor(context.chart, BAND_LAYER_ALPHA) });
+      });
+      // Dashed lines marking the ±1 SD edges
+      const edgeStyle = { ...lineStyle, borderColor: (context) => bandColor(context.chart, BAND_EDGE_ALPHA), borderWidth: 1, borderDash: [4, 3] };
+      datasets.push({ ...edgeStyle, label: 'Error high', data: edge(1, 1) });
+      datasets.push({ ...edgeStyle, label: 'Error low', data: edge(-1, 1) });
     }
     if (showLineBox.checked && shown.length) {
-      datasets.push({ ...lineStyle, label: 'Trend', data: shown.map((p) => ({ x: p.x, y: p.trend })), borderColor: 'red', borderWidth: 2 });
+      datasets.push({ ...lineStyle, label: 'Trend', data: shown.map((p) => ({ x: p.x, y: p.trend })), borderColor: lineColorOf(metric), borderWidth: 2, order: TREND_ORDER });
     } else if (showLineBox.checked && !model && points.length > 1) {
-      // Too few readings to fit the model: just join them up
-      datasets.push({ ...lineStyle, label: 'Trend', data: points, borderColor: 'red', borderWidth: 2 });
+      // Too few readings to fit the model: join them with a smooth curve (monotone, so it never
+      // overshoots past a reading)
+      const sorted = points.slice().sort((a, b) => a.x - b.x);
+      datasets.push({ ...lineStyle, label: 'Trend', data: sorted, borderColor: lineColorOf(metric), borderWidth: 2, tension: 0.4, cubicInterpolationMode: 'monotone', order: TREND_ORDER });
     }
     hovered = null;
+    pinned = null;
     renderStats(metric);
 
-    // With the model the axis runs on to now, so the estimate covers time since the last reading.
-    // The right-hand AXIS_FUTURE_SHARE of the axis is left empty, for the future.
-    const axisMin = shown.length ? Math.max(viewStart, shown[0].x) : (points.length ? points[0].x : emptyStart);
-    const dataEnd = shown.length ? shown[shown.length - 1].x : (points.length ? points[points.length - 1].x : emptyEnd);
-    const axisMax = dataEnd + (dataEnd - axisMin) * (AXIS_FUTURE_SHARE / (1 - AXIS_FUTURE_SHARE));
+    const yValues = [];
+    datasets.forEach((dataset, index) => {
+      if (index === 0 && !showPointsBox.checked) return;
+      dataset.data.forEach((p) => { if (p.y !== null && Number.isFinite(p.y)) yValues.push(p.y); });
+    });
+    const yRange = yValues.length
+      ? paddedRange(Math.min(...yValues), Math.max(...yValues), pad, Math.max(1, Math.abs(yValues[0]) * 0.05))
+      : null;
     const formatTooltipDate = (time) => new Date(time).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
     const options = {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      // The stats panel follows the pointer: the model's estimate and error at that date
+      // The stats panel follows the pointer: the model's estimate and error at that date.
+      // A click pins it there (the pointer is then ignored); another click releases it.
       onHover: (event, elements, chartInstance) => {
-        if (!shown.length || !chartInstance.scales?.x) return;
-        const time = chartInstance.scales.x.getValueForPixel(event.x);
-        let low = 0;
-        let high = shown.length - 1;
-        while (low < high) {
-          const mid = (low + high) >> 1;
-          if (shown[mid].x < time) low = mid + 1; else high = mid;
-        }
-        const nearest = low > 0 && Math.abs(shown[low - 1].x - time) < Math.abs(shown[low].x - time) ? shown[low - 1] : shown[low];
-        if (nearest !== hovered) {
+        if (pinned) return;
+        const nearest = estimateAtPixel(chartInstance, event.x);
+        if (nearest && nearest !== hovered) {
           hovered = nearest;
           renderStats(metric);
         }
+      },
+      onClick: (event, elements, chartInstance) => {
+        if (!shown.length) return;
+        if (pinned) {
+          pinned = null;
+          hovered = estimateAtPixel(chartInstance, event.x);
+        } else {
+          pinned = estimateAtPixel(chartInstance, event.x);
+        }
+        renderStats(metric);
       },
       plugins: {
         legend: { display: false },
@@ -734,12 +1001,24 @@
           type: 'time',
           min: axisMin,
           max: axisMax,
-          time: { unit: 'day', displayFormats: { day: 'dd MMM yyyy' } },
-          ticks: { autoSkip: true, maxTicksLimit: 8 },
+          // Ticks and grid lines on calendar dates (see calendarTicks), labelled to suit their step
+          afterBuildTicks: (scale) => {
+            const step = calendarTicks(scale.min, scale.max, Math.max(2, Math.floor((scale.width || 600) / TICK_LABEL_PX)));
+            scale.ticks = step.ticks.map((value) => ({ value }));
+            scale.calendarStep = step;
+          },
+          ticks: {
+            autoSkip: false,
+            maxRotation: 0,
+            callback: function (value, index) { return calendarTickLabel(value, index, this.calendarStep); }
+          },
           title: { display: true, text: 'Date' }
         },
         y: {
           beginAtZero: false,
+          ...(yRange ? { min: yRange.min, max: yRange.max } : {}),
+          // Only round-number labels, not the exact padded edges
+          ticks: { includeBounds: false },
           title: { display: true, text: metricLabel(metric) }
         }
       }
@@ -750,9 +1029,9 @@
       chart = new window.Chart(chartCanvas, { type: 'line', data: { datasets }, options });
     } catch (error) {
       // Without the date adapter, fall back to a plain number axis labelled with dates
-      console.error('Bio chart time axis failed, using a plain axis:', error);
+      console.error('Metrics chart time axis failed, using a plain axis:', error);
       if (chart) chart.destroy();
-      options.scales.x = { type: 'linear', min: options.scales.x.min, max: options.scales.x.max, ticks: { callback: formatTooltipDate, maxTicksLimit: 8 }, title: { display: true, text: 'Date' } };
+      options.scales.x = { ...options.scales.x, type: 'linear' };
       chart = new window.Chart(chartCanvas, { type: 'line', data: { datasets }, options });
     }
   }
@@ -774,10 +1053,8 @@
       await window.database.ref('bio').update({ ...metricUpdates(), [`entries/${selectedId}/${key}`]: entry });
       metricsSaved = true;
       (entriesByMetric[selectedId] ||= {})[key] = entry;
-      valueInput.value = '';
-      setDatePickerOpen(false);
+      setEntryRowOpen(false);
       render();
-      valueInput.focus();
     } catch (error) {
       notify(`Could not save: ${error.message}`);
     } finally {
@@ -819,7 +1096,7 @@
     const name = metricNameInput.value.trim();
     const unit = metricUnitInput.value.trim();
     if (!name) {
-      notify('Give the measurement a name.');
+      notify('Give the Metric a name.');
       return;
     }
     if (Object.values(metrics).some((metric) => metric.name.toLowerCase() === name.toLowerCase())) {
@@ -845,7 +1122,7 @@
     const metric = metrics[metricId];
     if (!metric) return;
     const count = sortedEntries(metricId).length;
-    const question = count ? `Remove ${metric.name} and its ${count} ${count === 1 ? 'entry' : 'entries'}?` : `Remove ${metric.name}?`;
+    const question = count ? `Remove ${metric.name} and its ${count} ${count === 1 ? 'Measurement' : 'Measurements'}?` : `Remove ${metric.name}?`;
     if (window.confirmInPlace && !(await window.confirmInPlace(button, { question }))) return;
     const remaining = Object.fromEntries(Object.entries(metrics).filter(([id]) => id !== metricId));
     try {
@@ -864,11 +1141,17 @@
     }
   }
 
-  // Points and line can be shown together or alone, but not both off
-  function onChartToggle(changed, other) {
-    if (!changed.checked && !other.checked) other.checked = true;
-    render();
-    saveSettings();
+  // Saves one setting of the selected Metric (a colour or a show/hide choice)
+  async function saveMetricSetting(key, value) {
+    if (!metrics[selectedId]) return;
+    // Before any Metric is stored, store them all (this one with its new setting)
+    const updates = metricsSaved ? { [`metrics/${selectedId}/${key}`]: value } : metricUpdates();
+    try {
+      await window.database.ref('bio').update(updates);
+      metricsSaved = true;
+    } catch (error) {
+      notify(`Could not save the setting: ${error.message}`);
+    }
   }
 
   tab.addEventListener('click', () => {
@@ -896,25 +1179,78 @@
     if (event.key === 'Enter') { event.preventDefault(); addMetric(); }
     if (event.key === 'Escape') setAddMetricOpen(false);
   }));
-  showPointsBox.addEventListener('change', () => onChartToggle(showPointsBox, showLineBox));
-  showLineBox.addEventListener('change', () => onChartToggle(showLineBox, showPointsBox));
+  // Points, trend and error are each shown or hidden per Metric, independently
+  VISIBILITY.forEach(([box, key]) => box.addEventListener('change', () => {
+    if (!metrics[selectedId]) return;
+    metrics[selectedId] = { ...metrics[selectedId], [key]: box.checked };
+    render();
+    saveMetricSetting(key, box.checked);
+  }));
   chartCanvas.addEventListener('mouseleave', () => {
-    if (!hovered) return;
+    if (!hovered || pinned) return;
     hovered = null;
     renderStats(metrics[selectedId] || { name: '', unit: '' });
   });
-  showSpreadBox.addEventListener('change', () => {
-    render();
-    saveSettings();
+  // Recolour the drawn chart in place (cheap enough to follow the picker while dragging,
+  // unlike rebuilding it)
+  function recolorChart() {
+    const metric = metrics[selectedId];
+    if (!chart || !metric) return;
+    // Point colours are cached per point, so the points dataset is swapped for a recoloured copy
+    // (a new dataset object makes Chart.js work its points' colours out again)
+    chart.data.datasets[0] = { ...chart.data.datasets[0], pointBackgroundColor: pointColorOf(metric) };
+    chart.data.datasets.forEach((dataset) => {
+      if (dataset.label === 'Trend') dataset.borderColor = lineColorOf(metric);
+    });
+    bandRgb = hexToRgb(bandColorOf(metric));
+    bandColorCache = new Map(); // the band's colours are worked out again on update
+    chart.update('none');
+  }
+
+  // Colours belong to the selected measurement: the chart follows the picker as it moves (at most
+  // once a frame), and the colour is saved COLOR_SAVE_DELAY_MS after it stops, or when the picker closes
+  const COLOR_SAVE_DELAY_MS = 700;
+  let recolorFrame = 0;
+  [[pointColorInput, 'pointColor'], [lineColorInput, 'lineColor'], [bandColorInput, 'bandColor']].forEach(([input, key]) => {
+    let saveTimer = 0;
+    const save = () => {
+      clearTimeout(saveTimer);
+      saveMetricSetting(key, input.value);
+    };
+    input.addEventListener('input', () => {
+      if (!metrics[selectedId]) return;
+      metrics[selectedId] = { ...metrics[selectedId], [key]: input.value };
+      if (!recolorFrame) {
+        recolorFrame = requestAnimationFrame(() => {
+          recolorFrame = 0;
+          recolorChart();
+        });
+      }
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, COLOR_SAVE_DELAY_MS);
+    });
+    input.addEventListener('change', save);
   });
   zoomSelect.addEventListener('change', () => {
     render();
     saveSettings();
   });
+  // The new-reading row stays hidden behind "Add measurement" until wanted, and closes after saving
+  function setEntryRowOpen(open) {
+    entryRow.hidden = !open;
+    openEntryBtn.hidden = open;
+    openEntryBtn.setAttribute('aria-expanded', String(open));
+    valueInput.value = '';
+    setDatePickerOpen(false);
+    (open ? valueInput : openEntryBtn).focus();
+  }
+  openEntryBtn.addEventListener('click', () => setEntryRowOpen(true));
+  el('bioCloseEntryBtn').addEventListener('click', () => setEntryRowOpen(false));
   saveEntryBtn.addEventListener('click', saveEntry);
   dateToggle.addEventListener('click', () => setDatePickerOpen(dateInput.hidden));
   valueInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') { event.preventDefault(); saveEntry(); }
+    if (event.key === 'Escape') setEntryRowOpen(false);
   });
   entryList.addEventListener('click', (event) => {
     const button = event.target.closest('.bio-delete-entry');

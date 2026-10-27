@@ -10,8 +10,103 @@ const showDataButton = document.getElementById('showDataButton');
 const performanceList = document.getElementById('performanceList');
 
 let currentProgressView = 'bestEfforts';
-let allExercisesMap = {};
+
+// Display options (see PROGRESS_OPTIONS at the end). "Per kg bodyweight" divides by bodyweight on
+// that day, taken from the Metrics tab's Weight Measurements.
+const e1rmPerBodyweightBox = document.getElementById('e1rmPerBodyweight');
+const bestEffortsMultiplyBox = document.getElementById('bestEffortsMultiply');
+const bestEffortsPerBodyweightBox = document.getElementById('bestEffortsPerBodyweight');
+const bestEffortsColorScaleBox = document.getElementById('bestEffortsColorScale');
+const bodyweightHint = document.getElementById('progressBodyweightHint');
+const progressOptions = { e1rmPerBodyweight: false, bestEffortsMultiply: false, bestEffortsPerBodyweight: false, bestEffortsColorScale: false };
+
+// Colour scale for a row's boxes: its lowest value pastel red, through pastel yellow, to its best
+// pastel green. Yellow is reached SCALE_YELLOW_AT of the way up, so only the very lowest are red.
+// Rows with fewer than SCALE_MIN_VALUES months aren't coloured (too few to compare).
+const SCALE_COLORS = [[244, 199, 195], [250, 236, 175], [196, 230, 193]];
+const SCALE_YELLOW_AT = 0.25;
+const SCALE_MIN_VALUES = 4;
+function scaleColor(share) {
+  const s = Math.min(1, Math.max(0, share));
+  const low = s <= SCALE_YELLOW_AT;
+  const [from, to] = low ? [SCALE_COLORS[0], SCALE_COLORS[1]] : [SCALE_COLORS[1], SCALE_COLORS[2]];
+  const mix = low ? s / SCALE_YELLOW_AT : (s - SCALE_YELLOW_AT) / (1 - SCALE_YELLOW_AT);
+  return `rgb(${from.map((c, i) => Math.round(c + mix * (to[i] - c))).join(', ')})`;
+}
+// Whether the current view divides by bodyweight
+const isPerBodyweightView = () => (currentProgressView === 'e1RM' && progressOptions.e1rmPerBodyweight)
+  || (currentProgressView === 'bestEfforts' && progressOptions.bestEffortsPerBodyweight);
+// Weight is read off a straight line between two Measurements up to this far apart, or from the
+// nearest Measurement up to this close; further from any Measurement it counts as unknown
+const BODYWEIGHT_MAX_GAP_DAYS = 180;
+const BODYWEIGHT_MAX_REACH_DAYS = 90;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const POUNDS_TO_KG = 0.45359237;
+
+// Weight Measurements from the Metrics tab, as [{ t (ms), kg }] oldest first. The Weight Metric is
+// the one with id "weight", or else one named Weight / Bodyweight; pounds are converted to kg.
+function getBodyweightSeries(bio) {
+  const metrics = bio?.metrics || {};
+  const isWeightName = (metric) => /^(body\s*)?weight$/i.test(String(metric?.name || '').trim());
+  let weightId = metrics.weight ? 'weight' : Object.keys(metrics).find((id) => isWeightName(metrics[id]));
+  if (!weightId && bio?.entries?.weight) weightId = 'weight'; // the built-in Weight Metric, never saved
+  if (!weightId) return [];
+  const unit = String(metrics[weightId]?.unit || 'kg').trim().toLowerCase();
+  const toKg = ['lb', 'lbs', 'pound', 'pounds'].includes(unit) ? POUNDS_TO_KG : 1;
+  return Object.values(bio?.entries?.[weightId] || {})
+    .map((entry) => {
+      const t = Number(entry?.time) || (/^\d{4}-\d{2}-\d{2}$/.test(entry?.date || '') ? new Date(`${entry.date}T12:00:00`).getTime() : NaN);
+      return { t, kg: Number(entry?.value) * toKg };
+    })
+    .filter((point) => Number.isFinite(point.t) && point.kg > 0)
+    .sort((a, b) => a.t - b.t);
+}
+
+// Bodyweight (kg) at a moment, or null when no Measurement is near enough
+function bodyweightAt(series, time) {
+  if (!series.length || !Number.isFinite(time)) return null;
+  let high = series.findIndex((point) => point.t >= time);
+  if (high === -1) high = series.length;
+  const before = series[high - 1];
+  const after = series[high];
+  if (before && after && after.t - before.t <= BODYWEIGHT_MAX_GAP_DAYS * DAY_MS) {
+    const share = after.t === before.t ? 0 : (time - before.t) / (after.t - before.t);
+    return before.kg + share * (after.kg - before.kg);
+  }
+  const nearest = [before, after].filter(Boolean).sort((a, b) => Math.abs(a.t - time) - Math.abs(b.t - time))[0];
+  return nearest && Math.abs(nearest.t - time) <= BODYWEIGHT_MAX_REACH_DAYS * DAY_MS ? nearest.kg : null;
+}
+let allExercisesMap = {}; // exercise id -> name
 let exerciseIdByLowerName = {};
+// Progress is tracked per variation: one item per exercise (its plain form) and per variation of it.
+// Key: the exercise id for the plain form (so older tracking choices still apply), or
+// "<id>~<variation>" for a variation (made safe as a database key).
+let progressItems = {}; // key -> { id, variation, label }
+
+function encodeKeyPart(text) {
+  return encodeURIComponent(text).replace(/\./g, '%2E');
+}
+
+function progressKey(id, variation = '') {
+  const trimmed = typeof variation === 'string' ? variation.trim() : '';
+  return trimmed ? `${id}~${encodeKeyPart(trimmed)}` : id;
+}
+
+function progressLabel(name, variation = '') {
+  const trimmed = typeof variation === 'string' ? variation.trim() : '';
+  return trimmed ? `${name} · ${trimmed}` : name;
+}
+
+// The exercise id an entry belongs to: by id when known, else by name
+function resolveExerciseId(id, name) {
+  if (id && allExercisesMap[id]) return id;
+  return exerciseIdByLowerName[String(name || '').trim().toLowerCase()] || '';
+}
+
+function normalizeVariationList(variations) {
+  const values = Array.isArray(variations) ? variations : (variations && typeof variations === 'object' ? Object.values(variations) : []);
+  return [...new Set(values.filter((value) => typeof value === 'string').map((value) => value.trim()).filter(Boolean))];
+}
 let isPerformanceListVisible = false;
 
 // Exercises hidden from progress are stored as false; anything unset counts as tracked.
@@ -116,11 +211,14 @@ function buildInitialProgressRows(allowedExerciseEntries, monthKeys) {
       monthly: monthKeys.reduce((acc, key) => {
         acc[key] = {
           e1RM: 0,
+          e1RMPerBw: 0, // best one-rep max ÷ bodyweight that month
           avg3VolumeSum: 0,
           avg3VolumeCount: 0,
           bestEffort: 0,
           bestEffortReps: 0,
-          bestEffortWeight: 0
+          bestEffortWeight: 0,
+          // The best set's reps × weight ÷ bodyweight that day (may be a different set from bestEffort)
+          bestEffortPerBw: 0
         };
         return acc;
       }, {})
@@ -141,7 +239,7 @@ function getFlattenedExerciseList(snapshotValue) {
   if (!isCategoryShape) {
     Object.entries(snapshotValue).forEach(([key, exercise]) => {
       const name = getExerciseName(exercise);
-      if (name) exercises.push({ id: key, name });
+      if (name) exercises.push({ id: key, name, variations: normalizeVariationList(exercise?.variations) });
     });
     return exercises;
   }
@@ -150,7 +248,7 @@ function getFlattenedExerciseList(snapshotValue) {
     if (!category || typeof category !== 'object') return;
     Object.entries(category).forEach(([key, exercise]) => {
       const name = getExerciseName(exercise);
-      if (name) exercises.push({ id: key, name });
+      if (name) exercises.push({ id: key, name, variations: normalizeVariationList(exercise?.variations) });
     });
   });
 
@@ -186,11 +284,14 @@ function getVisibleExerciseIds(rows) {
   });
 }
 
-function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys) {
-  const exerciseIds = Object.keys(allExercisesMap);
-  const allowedExercises = exerciseIds
+// bodyweightSeries: see getBodyweightSeries. The returned rows also carry missingBodyweight (not
+// enumerable): how many e1RM entries had no bodyweight near their date.
+function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys, bodyweightSeries = []) {
+  let missingBodyweight = 0;
+  let missingWorkoutBodyweight = 0;
+  const allowedExercises = Object.keys(progressItems)
     .filter(isExerciseTracked)
-    .map(id => ({ id, name: allExercisesMap[id] }))
+    .map(key => ({ id: key, name: progressItems[key].label }))
     .filter(entry => entry.name);
   const rows = buildInitialProgressRows(allowedExercises, monthKeys);
 
@@ -200,16 +301,19 @@ function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys) {
     const monthKey = `${entryDate.getFullYear()}-${String(entryDate.getMonth() + 1).padStart(2, '0')}`;
     if (!monthKeys.includes(monthKey)) return;
 
-    const exerciseKey = entry.exercise;
-    const exerciseName = getExerciseName(entry);
-    const normalized = exerciseName.toLowerCase();
-    const rowKey = (exerciseKey && rows[exerciseKey]) ? exerciseKey : exerciseIdByLowerName[normalized];
+    const exerciseId = resolveExerciseId(entry.exercise, getExerciseName(entry));
+    const rowKey = exerciseId && progressKey(exerciseId, entry.variation);
     if (!rowKey || !rows[rowKey]) return;
 
     const metrics = rows[rowKey].monthly[monthKey];
     const estimated = parseFloat(entry.estimated1RM) || 0;
     if (estimated > metrics.e1RM) {
       metrics.e1RM = estimated;
+    }
+    if (estimated > 0 && bodyweightSeries.length) {
+      const kg = bodyweightAt(bodyweightSeries, entryDate.getTime());
+      if (kg) metrics.e1RMPerBw = Math.max(metrics.e1RMPerBw, estimated / kg);
+      else missingBodyweight += 1;
     }
   });
 
@@ -222,10 +326,8 @@ function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys) {
 
     const exercises = Array.isArray(workout.exercises) ? workout.exercises : [];
     exercises.forEach(exercise => {
-      const exerciseName = getExerciseName(exercise);
-      const exerciseKey = exercise.id || exercise.exercise || exerciseName;
-      const normalized = exerciseName.toLowerCase();
-      const rowKey = (exerciseKey && rows[exerciseKey]) ? exerciseKey : exerciseIdByLowerName[normalized];
+      const exerciseId = resolveExerciseId(exercise.id || exercise.exercise, getExerciseName(exercise));
+      const rowKey = exerciseId && progressKey(exerciseId, exercise.variation);
       if (!rowKey || !rows[rowKey]) return;
 
       const metrics = rows[rowKey].monthly[monthKey];
@@ -248,9 +350,17 @@ function buildProgressRows(workoutsSnapshot, e1rmSnapshot, monthKeys) {
         metrics.bestEffortReps = bestSet.reps;
         metrics.bestEffortWeight = bestSet.weight;
       }
+      if (bodyweightSeries.length && bestSet.volume > 0) {
+        const kg = bodyweightAt(bodyweightSeries, workoutDate.getTime());
+        if (!kg) missingWorkoutBodyweight += 1;
+        else metrics.bestEffortPerBw = Math.max(metrics.bestEffortPerBw, bestSet.volume / kg);
+      }
     });
   });
 
+  // How many e1RM entries / workout sets had no bodyweight near their date (not exercise rows)
+  Object.defineProperty(rows, 'missingBodyweight', { value: missingBodyweight, enumerable: false });
+  Object.defineProperty(rows, 'missingWorkoutBodyweight', { value: missingWorkoutBodyweight, enumerable: false });
   return rows;
 }
 
@@ -305,11 +415,24 @@ function renderProgressTable(rows, monthKeys) {
     if (!hasData) return;
 
     const row = document.createElement('tr');
+    // Colour scale (Best efforts per kg bodyweight): each box placed between this row's lowest and best value
+    const rowValues = visibleMonthKeys.map((monthKey) => rowData.monthly[monthKey].bestEffortPerBw).filter((v) => v > 0);
+    const colorScale = currentProgressView === 'bestEfforts' && progressOptions.bestEffortsColorScale && rowValues.length >= SCALE_MIN_VALUES;
+    const rowLow = Math.min(...rowValues);
+    const rowHigh = Math.max(...rowValues);
+    const cellStyle = (value) => {
+      if (!colorScale || !(value > 0)) return getCellStyles(value);
+      const share = rowHigh > rowLow ? (value - rowLow) / (rowHigh - rowLow) : 1;
+      return `color:#0f172a; background:${scaleColor(share)}; font-weight:600;`;
+    };
     const cells = visibleMonthKeys.map(monthKey => {
       const metrics = rowData.monthly[monthKey];
       let value = 0;
       let display = '—';
-      if (currentProgressView === 'e1RM') {
+      if (currentProgressView === 'e1RM' && progressOptions.e1rmPerBodyweight) {
+        value = metrics.e1RMPerBw;
+        display = value > 0 ? `${value.toFixed(2)}×` : '—';
+      } else if (currentProgressView === 'e1RM') {
         value = metrics.e1RM;
         display = value > 0 ? metrics.e1RM.toFixed(1) : '—';
       } else if (currentProgressView === 'avg3Volume') {
@@ -318,10 +441,17 @@ function renderProgressTable(rows, monthKeys) {
           display = value > 0 ? Math.round(value).toString() : '—';
         }
       } else if (currentProgressView === 'bestEfforts') {
-        value = metrics.bestEffort;
-        display = value > 0 ? `${metrics.bestEffortReps}×${metrics.bestEffortWeight}kg` : '—';
+        // Plain: "5×60kg". Multiplied: 300. Multiplied per kg bodyweight: 4.7 (only with Multiply).
+        const { bestEffortsMultiply: multiply } = progressOptions;
+        const perBw = multiply && progressOptions.bestEffortsPerBodyweight;
+        value = perBw ? metrics.bestEffortPerBw : metrics.bestEffort;
+        if (value > 0) {
+          if (perBw) display = value.toFixed(1);
+          else if (multiply) display = String(Math.round(value));
+          else display = `${metrics.bestEffortReps}×${metrics.bestEffortWeight}kg`;
+        }
       }
-      return `<td style="text-align:center; ${getCellStyles(value)}">${display}</td>`;
+      return `<td style="text-align:center; ${cellStyle(value)}">${display}</td>`;
     }).join('');
 
     row.innerHTML = `<td style="white-space:nowrap;">${rowData.displayName || exerciseKey}</td>${cells}`;
@@ -329,16 +459,17 @@ function renderProgressTable(rows, monthKeys) {
   });
 }
 
-function populateExerciseDropdowns(exercises, visibleExerciseIds = []) {
+// One option per tracked exercise / variation (keys from progressItems)
+function populateExerciseDropdowns(visibleExerciseIds = []) {
   if (!ORMexerciseInput || !ORMexerciseDataFilter) return;
 
   ORMexerciseInput.innerHTML = '<option value="">Select exercise</option>';
   ORMexerciseDataFilter.innerHTML = '<option value="all">Filter by exercise</option>';
 
-  const exerciseIds = (visibleExerciseIds.length ? visibleExerciseIds : Object.keys(exercises)).filter(isExerciseTracked);
+  const exerciseIds = (visibleExerciseIds.length ? visibleExerciseIds : Object.keys(progressItems)).filter(isExerciseTracked);
 
   exerciseIds.forEach(key => {
-    const name = exercises[key];
+    const name = progressItems[key]?.label;
     if (!name) return;
 
     const option = document.createElement('option');
@@ -364,6 +495,13 @@ function loadExerciseOptions() {
     const flattened = getFlattenedExerciseList(value);
     allExercisesMap = Object.fromEntries(flattened.map(ex => [ex.id, ex.name]));
     exerciseIdByLowerName = Object.fromEntries(flattened.map(ex => [ex.name.toLowerCase(), ex.id]));
+    progressItems = {};
+    flattened.forEach((ex) => {
+      progressItems[progressKey(ex.id)] = { id: ex.id, variation: '', label: ex.name };
+      ex.variations.forEach((variation) => {
+        progressItems[progressKey(ex.id, variation)] = { id: ex.id, variation, label: progressLabel(ex.name, variation) };
+      });
+    });
   }).catch(error => {
     console.error('Error loading exercises:', error);
   });
@@ -379,7 +517,8 @@ function syncTrackedExercises() {
     const stored = snapshot.val();
     trackedExercises = stored && typeof stored === 'object' ? { ...stored } : {};
 
-    const exerciseIds = Object.keys(allExercisesMap);
+    // Every exercise and every variation of one is tracked (or not) on its own
+    const exerciseIds = Object.keys(progressItems);
     const hadSavedChoices = exerciseIds.some(id => id in trackedExercises);
     let known = exerciseIds.filter(id => id in trackedExercises).length;
     const updates = {};
@@ -407,7 +546,10 @@ const trackedExercisesPanel = document.getElementById('trackedExercisesPanel');
 
 function renderTrackedExercisesPanel() {
   if (!trackedExercisesPanel) return;
-  const entries = Object.entries(allExercisesMap)
+  // One row per exercise and per variation ("Bench press · Incline"), alphabetical so each
+  // exercise's variations sit right under it
+  const entries = Object.entries(progressItems)
+    .map(([key, item]) => [key, item.label])
     .sort((a, b) => a[1].localeCompare(b[1]));
 
   if (!entries.length) {
@@ -455,10 +597,6 @@ if (trackedExercisesToggleBtn && trackedExercisesPanel) {
   });
 }
 
-function getExerciseNameByKey(key) {
-  const exerciseName = allExercisesMap[key];
-  return typeof exerciseName === 'string' ? exerciseName : '';
-}
 
 function saveE1RMEntry() {
   const exerciseKey = ORMexerciseInput?.value;
@@ -469,7 +607,8 @@ function saveE1RMEntry() {
     return;
   }
 
-  const exerciseName = getExerciseNameByKey(exerciseKey);
+  const item = progressItems[exerciseKey];
+  const exerciseName = item ? allExercisesMap[item.id] : '';
   if (!exerciseName) {
     showNotice('Selected exercise could not be found.', 'error');
     return;
@@ -480,8 +619,9 @@ function saveE1RMEntry() {
   const unixtime = Date.now();
 
   window.database.ref('estimoneRepMax').push({
-    exercise: exerciseKey,
+    exercise: item.id,
     name: exerciseName,
+    ...(item.variation ? { variation: item.variation } : {}),
     reps,
     weight,
     estimated1RM,
@@ -520,7 +660,7 @@ function renderPerformanceList(entries) {
     const label = document.createElement('span');
     const date = parseWorkoutDate(entry);
     const formattedDate = date ? date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : entry.timestamp || '';
-    label.textContent = `${entry.name || 'Unnamed'} — ${entry.reps || '-'} reps @ ${entry.weight || '-'} kg — ${Math.round(entry.estimated1RM || 0)} e1RM — ${formattedDate}`;
+    label.textContent = `${progressLabel(entry.name || 'Unnamed', entry.variation)} — ${entry.reps || '-'} reps @ ${entry.weight || '-'} kg — ${Math.round(entry.estimated1RM || 0)} e1RM — ${formattedDate}`;
 
     const deleteButton = document.createElement('button');
     deleteButton.type = 'button';
@@ -549,7 +689,8 @@ function loadPerformanceList() {
     snapshot.forEach(childSnapshot => {
       const entry = childSnapshot.val();
       entry.key = childSnapshot.key;
-      if (filterKey && filterKey !== 'all' && entry.exercise !== filterKey) return;
+      const entryKey = progressKey(resolveExerciseId(entry.exercise, entry.name) || entry.exercise, entry.variation);
+      if (filterKey && filterKey !== 'all' && entryKey !== filterKey) return;
       entries.push(entry);
     });
 
@@ -560,10 +701,11 @@ function loadPerformanceList() {
   });
 }
 
-// The record form and saved-entry list only apply to the e1RM view
+// The record form and saved-entry list only apply to the e1RM view; Best efforts has its own options
 function updateProgressControlsVisibility() {
   const isE1RM = currentProgressView === 'e1RM';
   document.getElementById('e1rmControls')?.classList.toggle('hidden', !isE1RM);
+  document.getElementById('bestEffortsControls')?.classList.toggle('hidden', currentProgressView !== 'bestEfforts');
   performanceList?.classList.toggle('hidden', !isE1RM || !isPerformanceListVisible);
 }
 
@@ -571,25 +713,44 @@ function updateProgressViewButtons() {
   updateProgressControlsVisibility();
   progressViewButtons.forEach(button => {
     const isActive = button.dataset.view === currentProgressView;
-    button.classList.toggle('btn-primary', isActive);
-    button.classList.toggle('btn-outline-primary', !isActive);
-    button.classList.toggle('active', isActive);
+    // Same look as the Workouts tab's List / Editor switch
+    button.classList.toggle('exo-btn-active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
   });
+}
+
+// Under the table in "per kg bodyweight" mode: says when weight Measurements are missing
+function updateBodyweightHint(series, rows) {
+  if (!bodyweightHint) return;
+  let text = '';
+  if (isPerBodyweightView()) {
+    const missing = currentProgressView === 'e1RM' ? rows.missingBodyweight : rows.missingWorkoutBodyweight;
+    const things = currentProgressView === 'e1RM' ? ['entry', 'entries'] : ['workout set', 'workout sets'];
+    if (!series.length) text = 'Log your weight in the Metrics tab to see this per kg bodyweight.';
+    else if (missing === 1) text = `1 ${things[0]} has no weight logged near its date, so it is left out.`;
+    else if (missing) text = `${missing} ${things[1]} have no weight logged near their date, so they are left out.`;
+  }
+  bodyweightHint.textContent = text;
+  bodyweightHint.hidden = !text;
 }
 
 function loadProgressData() {
   if (!window.database) return;
+  const needsBodyweight = isPerBodyweightView();
   Promise.all([
     window.database.ref('estimoneRepMax').once('value'),
-    window.database.ref('workouts').once('value')
-  ]).then(([e1rmSnapshot, workoutsSnapshot]) => {
+    window.database.ref('workouts').once('value'),
+    needsBodyweight ? window.database.ref('bio').once('value') : Promise.resolve(null)
+  ]).then(([e1rmSnapshot, workoutsSnapshot, bioSnapshot]) => {
     const workoutsData = workoutsSnapshot.val() || {};
     const e1rmData = e1rmSnapshot.val() || {};
+    const bodyweightSeries = bioSnapshot ? getBodyweightSeries(bioSnapshot.val()) : [];
     const monthKeys = getAllProgressMonthKeys(workoutsData, e1rmData);
-    const rows = buildProgressRows(workoutsData, e1rmData, monthKeys);
+    const rows = buildProgressRows(workoutsData, e1rmData, monthKeys, bodyweightSeries);
     renderProgressTable(rows, monthKeys);
+    updateBodyweightHint(bodyweightSeries, rows);
     const visibleExerciseIds = getVisibleExerciseIds(rows);
-    populateExerciseDropdowns(allExercisesMap, visibleExerciseIds);
+    populateExerciseDropdowns(visibleExerciseIds);
   }).catch(error => {
     console.error('Error loading progress data:', error);
   });
@@ -599,7 +760,7 @@ if (progressToggleButton && progressArea) {
   progressToggleButton.addEventListener('click', () => {
     progressArea.classList.toggle('hidden');
     if (!progressArea.classList.contains('hidden')) {
-      loadExerciseOptions().then(syncTrackedExercises).then(() => {
+      loadExerciseOptions().then(syncTrackedExercises).then(loadPerBodyweightSetting).then(() => {
         loadProgressData();
         if (isPerformanceListVisible) {
           loadPerformanceList();
@@ -658,5 +819,62 @@ progressViewButtons.forEach(button => {
     }
   });
 });
+
+// Display options, saved under settings/progress:
+// - e1rmPerBodyweight: estimated one-rep max ÷ bodyweight
+// - bestEffortsMultiply: best set as reps × weight (one number) instead of "reps×weight"
+// - bestEffortsPerBodyweight: best set's reps × weight ÷ bodyweight (needs Multiply)
+// - bestEffortsColorScale: colour each exercise's months red → yellow → green (needs Per kg bodyweight)
+const PROGRESS_OPTIONS = [
+  [e1rmPerBodyweightBox, 'e1rmPerBodyweight'],
+  [bestEffortsMultiplyBox, 'bestEffortsMultiply'],
+  [bestEffortsPerBodyweightBox, 'bestEffortsPerBodyweight'],
+  [bestEffortsColorScaleBox, 'bestEffortsColorScale']
+];
+
+function loadPerBodyweightSetting() {
+  if (!window.database) return Promise.resolve();
+  return window.database.ref('settings/progress').once('value').then((snapshot) => {
+    const saved = snapshot.val() || {};
+    PROGRESS_OPTIONS.forEach(([box, key]) => {
+      progressOptions[key] = saved[key] === true;
+      if (box) box.checked = progressOptions[key];
+    });
+    syncBestEffortsPerBodyweight();
+  }).catch((error) => console.error('Could not load the Progress options:', error));
+}
+
+// Best efforts options build on each other: Per kg bodyweight only works on the multiplied number,
+// and the colour scale only on per kg bodyweight. Each is only available (and only on) while the one
+// before it is ticked. Returns the options it turned off, as updates to save.
+const BEST_EFFORTS_CHAIN = [
+  [bestEffortsPerBodyweightBox, 'bestEffortsPerBodyweight', 'bestEffortsMultiply'],
+  [bestEffortsColorScaleBox, 'bestEffortsColorScale', 'bestEffortsPerBodyweight']
+];
+
+function syncBestEffortsPerBodyweight() {
+  const turnedOff = {};
+  BEST_EFFORTS_CHAIN.forEach(([box, key, needs]) => {
+    if (!box) return;
+    const allowed = progressOptions[needs];
+    box.disabled = !allowed;
+    box.closest('label')?.classList.toggle('is-disabled', !allowed);
+    if (!allowed && progressOptions[key]) turnedOff[key] = false;
+    if (!allowed) {
+      progressOptions[key] = false;
+      box.checked = false;
+    }
+  });
+  return turnedOff;
+}
+
+PROGRESS_OPTIONS.forEach(([box, key]) => box?.addEventListener('change', () => {
+  progressOptions[key] = box.checked;
+  const updates = { [key]: box.checked, ...syncBestEffortsPerBodyweight() };
+  loadProgressData();
+  window.database?.ref('settings/progress').update(updates)
+    .catch((error) => console.error('Could not save the Progress option:', error));
+}));
+syncBestEffortsPerBodyweight();
 
 updateProgressViewButtons();

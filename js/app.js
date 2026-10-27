@@ -627,8 +627,21 @@ async function loadExercises() {
     });
   }
 
-  renderExerciseDropdown(exerciseCatalogByCategory, {});
+  // "Frequency" order: most done lately first (see computeExerciseFrequency)
+  let frequencyMap = {};
+  try {
+    frequencyMap = await computeExerciseFrequency();
+  } catch (error) {
+    console.error('Could not count how often exercises are done:', error);
+  }
+  renderExerciseDropdown(exerciseCatalogByCategory, frequencyMap);
 }
+
+// How often each exercise has been done lately, for the dropdown's "Frequency" order. Each workout
+// counts once per exercise, weighted by how recent it is: today 1, halving every
+// FREQUENCY_HALF_LIFE_DAYS, so what you've been doing lately comes first. Undated workouts count as old.
+const FREQUENCY_HALF_LIFE_DAYS = 42;
+const UNDATED_WORKOUT_WEIGHT = 0.02;
 
 async function computeExerciseFrequency() {
   const snapshot = await database.ref('workouts').once('value');
@@ -639,12 +652,18 @@ async function computeExerciseFrequency() {
     return frequencyMap;
   }
 
+  const now = Date.now();
   Object.values(workouts).forEach((workout) => {
     if (!workout || !Array.isArray(workout.exercises)) return;
+    const time = /^\d{4}-\d{2}-\d{2}/.test(workout.date || '') ? new Date(`${workout.date.slice(0, 10)}T12:00:00`).getTime() : NaN;
+    const daysAgo = Number.isFinite(time) ? Math.max(0, (now - time) / 86400000) : null;
+    const weight = daysAgo === null ? UNDATED_WORKOUT_WEIGHT : 0.5 ** (daysAgo / FREQUENCY_HALF_LIFE_DAYS);
+    const seen = new Set();
     workout.exercises.forEach((exercise) => {
-      const key = exercise.id || exercise.name;
-      if (!key) return;
-      frequencyMap[key] = (frequencyMap[key] || 0) + 1;
+      const key = exercise?.id || exercise?.name;
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      frequencyMap[key] = (frequencyMap[key] || 0) + weight;
     });
   });
 
@@ -850,7 +869,7 @@ function setupWorkoutMonthSelector() {
   const monthSelect = document.getElementById('workout-month-filter');
   if (!monthSelect) return;
 
-  monthSelect.innerHTML = '<option value="">Select Month</option>' +
+  monthSelect.innerHTML = '<option value="">All Months</option>' +
     MONTH_NAMES.map((name, index) => `<option value="${String(index + 1).padStart(2, '0')}">${name}</option>`).join('');
   monthSelect.value = '';
 }
@@ -1288,7 +1307,10 @@ exerciseGroupingModeButtons.forEach((button) => {
 var basePath = "/workouts/";
 var workoutKeys = [];
 var workoutsById = {};
-var currentIndex = 0;
+var currentIndex = -1; // -1 = no workout picked yet
+// Year / month picked in the editor before a day (and so a workout) is chosen
+var workoutNavYear = "";
+var workoutNavMonth = "";
 
 // Load workout node keys through the Cognito-protected backend.
 async function loadWorkouts() {
@@ -1301,9 +1323,7 @@ async function loadWorkouts() {
       String(workoutsById[b]?.date || '').localeCompare(String(workoutsById[a]?.date || '')) || a.localeCompare(b));
 
     if (workoutKeys.length > 0) {
-      console.log("Workout Keys:", workoutKeys);
-      currentIndex = 0;
-      displayCurrentNode();
+      clearWorkoutSelection();
     } else {
       document.getElementById("fields").innerHTML = "<p>No workouts found.</p>";
       renderWorkoutNav();
@@ -1418,8 +1438,25 @@ function updateAddPastExerciseState() {
   const addExerciseBtn = document.getElementById("addPastExerciseBtn");
   if (!addExerciseBtn) return;
   const dateInput = document.getElementById("workout_date");
-  const hasWorkout = workoutKeys.length > 0 || isNewWorkout;
+  const hasWorkout = currentIndex >= 0 || isNewWorkout;
   addExerciseBtn.disabled = !hasWorkout || !(dateInput && dateInput.value.trim());
+  // Save and Delete need a workout to act on (Delete doubles as Cancel for a new one)
+  ["saveChangesBtn", "deleteWorkoutBtn"].forEach((id) => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = !hasWorkout;
+  });
+}
+
+// Show the editor with no workout loaded, so a day has to be picked first.
+// Year and month start on the current ones when there are workouts in them.
+function clearWorkoutSelection() {
+  if (isNewWorkout) setNewWorkoutMode(false);
+  currentIndex = -1;
+  const [year, month] = getToday().split("-");
+  const dates = workoutKeys.map((key) => getWorkoutDateParts(key));
+  workoutNavYear = dates.some((parts) => parts.year === year) ? year : "";
+  workoutNavMonth = workoutNavYear && dates.some((parts) => parts.year === year && parts.month === month) ? month : "";
+  displayCurrentNode();
 }
 
 function startNewWorkout() {
@@ -1427,13 +1464,16 @@ function startNewWorkout() {
   document.getElementById("fields").innerHTML = `
     <h3 class="we-heading">New workout</h3>
     <div class="we-info">
+      <label class="we-field">Name
+        <input type="text" id="workout_name" value="" placeholder="Workout on (date)">
+      </label>
       <label class="we-field">Date
         <input type="date" id="workout_date" value="">
       </label>
-      <label class="we-field">Duration
+      <label class="we-field we-field-sm">Duration
         <input type="text" id="workout_duration" value="">
       </label>
-      <label class="we-field">Score
+      <label class="we-field we-field-sm">Score
         <input type="text" id="workout_intensity" value="">
       </label>
       <label class="we-field">Note
@@ -1452,7 +1492,7 @@ function startNewWorkout() {
 function cancelNewWorkout() {
   setNewWorkoutMode(false);
   if (workoutKeys.length > 0) {
-    displayCurrentNode();
+    clearWorkoutSelection();
   } else {
     document.getElementById("fields").innerHTML = "<p>No workouts found.</p>";
   }
@@ -1462,12 +1502,21 @@ function displayCurrentNode() {
   if (isNewWorkout) setNewWorkoutMode(false);
   if (workoutKeys.length === 0) return;
 
+  if (currentIndex < 0) {
+    const step = !workoutNavYear ? "a year" : !workoutNavMonth ? "a month" : "a day";
+    document.getElementById("fields").innerHTML = `<p class="we-hint">Choose ${step} above to open a workout.</p>`;
+    renderWorkoutNav();
+    updateAddPastExerciseState();
+    return;
+  }
+
   var workoutID = workoutKeys[currentIndex];
   var data = workoutsById[workoutID];
   var fieldsHTML = "";
 
   if (data) {
     const workoutFields = {
+      name: "Name",
       date: "Date",
       duration: "Duration",
       intensity: "Score",
@@ -1477,9 +1526,12 @@ function displayCurrentNode() {
 
     fieldsHTML += `<h3 class="we-heading">Workout info</h3><div class="we-info">`;
     for (const key in workoutFields) {
+      // An empty name shows the default "Workout on …" title
+      const placeholder = key === "name" ? ` placeholder="${escapeExerciseHtml(getDefaultWorkoutName(data.date))}"` : "";
+      const sizeClass = key === "duration" || key === "intensity" ? " we-field-sm" : "";
       fieldsHTML += `
-        <label class="we-field">${workoutFields[key]}
-          <input type="text" id="workout_${key}" value="${escapeExerciseHtml(data[key] || '')}">
+        <label class="we-field${sizeClass}">${workoutFields[key]}
+          <input type="text" id="workout_${key}" value="${escapeExerciseHtml(data[key] || '')}"${placeholder}>
         </label>`;
     }
     fieldsHTML += `</div>`;
@@ -1507,6 +1559,11 @@ function formatWorkoutListDate(date) {
   return monthName ? `${Number(match[3])} ${monthName.slice(0, 3)} ${match[1]}` : date;
 }
 
+// Title used when a workout has no name of its own
+function getDefaultWorkoutName(date) {
+  return `Workout on ${formatWorkoutListDate(date)}`;
+}
+
 function getWorkoutDateParts(key) {
   const [year = "", month = "", day = ""] = String(workoutsById[key]?.date || "").split("-");
   return { year, month, day };
@@ -1525,37 +1582,41 @@ function renderWorkoutNav() {
   if (!yearSelect || !monthSelect || !daySelect) return;
 
   const hasWorkouts = workoutKeys.length > 0;
-  [yearSelect, monthSelect, daySelect].forEach((select) => { select.disabled = !hasWorkouts; });
   if (!hasWorkouts) {
-    [yearSelect, monthSelect, daySelect].forEach((select) => { select.innerHTML = ""; });
+    [yearSelect, monthSelect, daySelect].forEach((select) => { select.innerHTML = ""; select.disabled = true; });
     return;
   }
 
-  const current = getWorkoutDateParts(workoutKeys[currentIndex]);
+  // With a workout open, the dropdowns show its date; otherwise whatever has been picked so far.
+  const selectedKey = currentIndex >= 0 ? workoutKeys[currentIndex] : "";
+  const current = selectedKey ? getWorkoutDateParts(selectedKey) : { year: workoutNavYear, month: workoutNavMonth };
   const unique = (values) => Array.from(new Set(values));
   const sameYear = workoutKeys.filter((key) => getWorkoutDateParts(key).year === current.year);
   const sameMonth = sameYear.filter((key) => getWorkoutDateParts(key).month === current.month);
+  const placeholder = (label) => ({ value: "", label });
 
-  fillSelect(yearSelect, unique(workoutKeys.map((key) => getWorkoutDateParts(key).year))
-    .map((year) => ({ value: year, label: year || "No date" })), current.year);
-  fillSelect(monthSelect, unique(sameYear.map((key) => getWorkoutDateParts(key).month))
-    .map((month) => ({ value: month, label: MONTH_NAMES[Number(month) - 1] || month || "No date" })), current.month);
-  fillSelect(daySelect, sameMonth.map((key) => {
+  fillSelect(yearSelect, [placeholder("Year")].concat(unique(workoutKeys.map((key) => getWorkoutDateParts(key).year))
+    .map((year) => ({ value: year, label: year || "No date" }))), current.year);
+  fillSelect(monthSelect, [placeholder("Month")].concat(unique(sameYear.map((key) => getWorkoutDateParts(key).month))
+    .map((month) => ({ value: month, label: MONTH_NAMES[Number(month) - 1] || month || "No date" }))), current.month);
+  fillSelect(daySelect, [placeholder("Day")].concat(sameMonth.map((key) => {
     const day = getWorkoutDateParts(key).day;
     const duplicates = sameMonth.filter((other) => getWorkoutDateParts(other).day === day);
     const label = duplicates.length > 1 ? `${day || "No date"} (${duplicates.indexOf(key) + 1})` : (day || "No date");
     return { value: key, label };
-  }), workoutKeys[currentIndex]);
+  })), selectedKey);
+
+  yearSelect.disabled = false;
+  monthSelect.disabled = !current.year;
+  daySelect.disabled = !current.year || !current.month;
 }
 
-// Jump to the most recent workout matching the chosen year (and month when given).
-function selectWorkoutByDate(year, month) {
-  const matches = workoutKeys.filter((key) => {
-    const parts = getWorkoutDateParts(key);
-    return parts.year === year && (month === undefined || parts.month === month);
-  });
-  if (!matches.length) return;
-  currentIndex = workoutKeys.indexOf(matches[0]);
+// Picking a year or month narrows the choices; a workout only opens once a day is picked.
+function pickWorkoutNavDate(year, month) {
+  if (isNewWorkout) setNewWorkoutMode(false);
+  currentIndex = -1;
+  workoutNavYear = year;
+  workoutNavMonth = year ? month : "";
   displayCurrentNode();
 }
 
@@ -1663,8 +1724,7 @@ function saveChanges() {
           workoutKeys.push(result.id);
           workoutKeys.sort((a, b) =>
             String(workoutsById[b]?.date || "").localeCompare(String(workoutsById[a]?.date || "")) || a.localeCompare(b));
-          currentIndex = Math.max(workoutKeys.indexOf(result.id), 0);
-          displayCurrentNode();
+          finishWorkoutEditorSave();
           showNotice("Workout added.", "success");
           refreshAfterWorkoutSaved({ reloadEditor: false });
         })
@@ -1677,12 +1737,17 @@ function saveChanges() {
         workoutsById[workoutID] = result.workout;
         workoutKeys.sort((a, b) =>
           String(workoutsById[b]?.date || '').localeCompare(String(workoutsById[a]?.date || '')) || a.localeCompare(b));
-        currentIndex = Math.max(workoutKeys.indexOf(workoutID), 0);
-        renderWorkoutNav();
+        finishWorkoutEditorSave();
         showNotice("Workout saved.", "success");
         refreshAfterWorkoutSaved({ reloadEditor: false });
       })
       .catch(error => showNotice("Error: " + error.message, 'error'));
+}
+
+// After a save: flash the Workouts tab green and clear the date so the next workout is picked fresh.
+function finishWorkoutEditorSave() {
+  clearWorkoutSelection();
+  flashSuccess(document.getElementById("showWorkoutsBtn"));
 }
 
 async function deleteExercise(index, button) {
@@ -1732,12 +1797,10 @@ async function deleteworkout(event) {
       
       // Refresh local index and editor UI.
       workoutKeys.splice(currentIndex, 1);
-      if (currentIndex >= workoutKeys.length) {
-        currentIndex = Math.max(workoutKeys.length - 1, 0);
-      }
       if (workoutKeys.length > 0) {
-        displayCurrentNode();
+        clearWorkoutSelection();
       } else {
+        currentIndex = -1;
         document.getElementById("editForm").innerHTML = "";
         document.getElementById("fields").innerHTML = "<p>No workouts found.</p>";
         renderWorkoutNav();
@@ -1757,11 +1820,14 @@ function initWorkoutEditorControls() {
   const yearNav = document.getElementById("workoutYearNav");
   const monthNav = document.getElementById("workoutMonthNav");
   const dayNav = document.getElementById("workoutDayNav");
-  if (yearNav) yearNav.addEventListener("change", () => selectWorkoutByDate(yearNav.value));
-  if (monthNav) monthNav.addEventListener("change", () => selectWorkoutByDate(yearNav.value, monthNav.value));
+  if (yearNav) yearNav.addEventListener("change", () => pickWorkoutNavDate(yearNav.value, ""));
+  if (monthNav) monthNav.addEventListener("change", () => pickWorkoutNavDate(yearNav.value, monthNav.value));
   if (dayNav) dayNav.addEventListener("change", () => {
     const index = workoutKeys.indexOf(dayNav.value);
-    if (index === -1) return;
+    if (index === -1) {
+      pickWorkoutNavDate(yearNav.value, monthNav.value);
+      return;
+    }
     currentIndex = index;
     displayCurrentNode();
   });
@@ -2641,6 +2707,9 @@ function renderExerciseList() {
   intensityDiv.innerHTML = `
   <div class="row p-1">
   <div class="col-8 col-md-2">
+    <input type="text" id="workoutName" class="form-control form-control-sm" placeholder="${escapeExerciseHtml(getDefaultWorkoutName(getToday()))}" aria-label="Workout name" value="${escapeExerciseHtml(currentWorkout.name || '')}">
+  </div>
+  <div class="col-8 col-md-2">
     <input type="number" id="workoutIntensity" class="form-control form-control-sm" placeholder="Score your workout 1-10" min="1" max="10" value="${currentWorkout.intensity || ''}">
   </div>
   <div class="col-8 col-md-2">
@@ -2786,6 +2855,12 @@ function setupDraftListeners() {
       saveWorkoutDraft();
       return;
     }
+
+    if (target.matches('#workoutName')) {
+      currentWorkout.name = target.value.trim();
+      saveWorkoutDraft();
+      return;
+    }
   });
 
   document.addEventListener('click', (e) => {
@@ -2855,6 +2930,7 @@ saveWorkoutBtn.addEventListener('click', async () => {
   });
 
   const workout = {
+    name: (document.getElementById('workoutName')?.value || '').trim(),
     date: getToday(),
     exercises: workoutExercises,
     intensity: intensityValue,
@@ -2868,6 +2944,7 @@ saveWorkoutBtn.addEventListener('click', async () => {
   try {
     await saveWorkout(workout);
     selectedExercises.length = 0;
+    currentWorkout.name = '';
     currentWorkout.intensity = '';
     currentWorkout.intensityNote = '';
     currentWorkout.saveId = '';
@@ -2940,6 +3017,9 @@ function loadWorkoutDraft() {
       }
       if (draft.intensityNote) {
         currentWorkout.intensityNote = draft.intensityNote; // Load intensity note
+      }
+      if (draft.name) {
+        currentWorkout.name = draft.name;
       }
       if (draft.saveId) {
         currentWorkout.saveId = draft.saveId; // Resaving a restored draft updates the same workout
@@ -3032,6 +3112,7 @@ function saveWorkoutDraft() {
     exercises: selectedExercises,
     intensity: document.getElementById('workoutIntensity')?.value ?? (currentWorkout.intensity || ''), // Save intensity
     intensityNote: currentWorkout.intensityNote || '', // Save intensity note
+    name: currentWorkout.name || '',
     date: getToday(),
     saveId: getWorkoutSaveId()
   };
@@ -3083,15 +3164,21 @@ function syncAddEditToolbar() {
   exerciseActionButtons.classList.toggle("hidden", !exerciseOpen);
 }
 
+// Briefly flash a button green as confirmation.
+function flashSuccess(button) {
+  if (!button) return;
+  button.classList.remove("flash-success");
+  void button.offsetWidth;
+  button.classList.add("flash-success");
+  button.addEventListener("animationend", () => button.classList.remove("flash-success"), { once: true });
+}
+
 // Close every Add and Edit panel and briefly flash the toggle button green as confirmation.
 function collapseAddEditSection() {
   if (!addEditToolbarButtons.classList.contains("hidden")) {
     toggleFormBtn.click();
   }
-  toggleFormBtn.classList.remove("flash-success");
-  void toggleFormBtn.offsetWidth;
-  toggleFormBtn.classList.add("flash-success");
-  toggleFormBtn.addEventListener("animationend", () => toggleFormBtn.classList.remove("flash-success"), { once: true });
+  flashSuccess(toggleFormBtn);
 }
 
 // Toggle the whole Add and Edit toolbar ("Hide" collapses every panel)
@@ -3102,6 +3189,9 @@ toggleFormBtn.addEventListener("click", () => {
   if (!isOpening) {
     addExerciseFormWrapper.classList.add("hidden");
     exerciseEditorSection.classList.add("hidden");
+  } else if (addExerciseFormWrapper.classList.contains("hidden") && exerciseEditorSection.classList.contains("hidden")) {
+    // Open on "Add Exercise" by default; clicking it also refreshes the library list
+    toggleAddExerciseFormBtn.click();
   }
   syncAddEditToolbar();
 });
@@ -3156,20 +3246,22 @@ function renderSavedWorkouts() {
       })
       .sort(([, a], [, b]) => (b.date || '').localeCompare(a.date || ''));
 
-    entries.forEach(([, workout]) => {
+    // Each workout is a card: header (name, score, duration, notes), the exercises, and a footer
+    // with the result when there is one
+    entries.forEach(([workoutKey, workout]) => {
       const date = workout.date || '';
-      const intensity = workout.intensity ? `Score: ${workout.intensity}/10` : '';
-      const intensityNote = workout.intensityNote ? workout.intensityNote : '';
-      const duration = workout.duration ? workout.duration : '';
-      const dateText = `<strong>Workout on ${formatWorkoutListDate(date)}</strong>`;
-      const intensityText = intensity ? `<span style="color: green;">${intensity}</span>` : '';
-      const durationText = duration ? `<span style="color: green;">${duration}</span>` : '';
-      const intensityNoteText = intensityNote ? `<span style="color: green;">${intensityNote}</span>` : '';
+      const editBtn = `<button type="button" class="saved-workout-edit-btn" data-workout-key="${escapeExerciseHtml(workoutKey)}" title="Edit in workout editor" aria-label="Edit this workout">✎</button>`;
+      const title = String(workout.name || '').trim() || getDefaultWorkoutName(date);
+      const meta = [
+        workout.intensity ? `Score ${escapeExerciseHtml(workout.intensity)}/10` : '',
+        workout.duration ? escapeExerciseHtml(workout.duration) : ''
+      ].filter(Boolean).map((text) => `<span class="saved-workout-chip">${text}</span>`).join('');
+      const notes = workout.intensityNote ? `<div class="saved-workout-notes">${escapeExerciseHtml(workout.intensityNote)}</div>` : '';
 
       const exercises = [...(workout.exercises || [])].reverse().map((e) => {
-        const name = e.name || 'Unknown';
-        const variation = e.variation ? ` <span style="color:#555;">(${escapeExerciseHtml(e.variation)})</span>` : '';
-        const noteText = e.note ? ` <span style="color: red;">${e.note}</span>` : '';
+        const name = escapeExerciseHtml(e.name || 'Unknown');
+        const variation = e.variation ? ` <span class="saved-workout-variation">(${escapeExerciseHtml(e.variation)})</span>` : '';
+        const noteText = e.note ? ` <span class="saved-workout-exercise-note">${escapeExerciseHtml(e.note)}</span>` : '';
 
         if (Array.isArray(e.setsList) && e.setsList.length > 0) {
           const setsList = e.setsList;
@@ -3181,29 +3273,32 @@ function renderSavedWorkouts() {
             // "reps" is spelled out only next to a custom value, where a bare number would be unclear
             const reps = set.reps ? `${set.reps}${set.custom ? ' reps' : ''}${set.weight ? ` x ${set.weight}kg` : ''}` : (set.weight ? `${set.weight}kg` : '');
             const custom = set.custom ? `${escapeExerciseHtml(set.custom)} ${escapeExerciseHtml(e.customLabel || '')}`.trim() : '';
-            const setNote = set.note ? ` (${set.note})` : '';
+            const setNote = set.note ? ` (${escapeExerciseHtml(set.note)})` : '';
             return `${idx + 1}) ${[reps, custom].filter(Boolean).join(' · ') || '-'}${setNote}`;
           }).join(', ');
-          return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>${variation}: ${summary}${noteText}${setDetails ? ` — ${setDetails}` : ''}</div>`;
+          return `<div class="saved-workout-exercise"><span class="saved-workout-exercise-name">${name}</span>${variation}: ${summary}${noteText}${setDetails ? ` <span class="saved-workout-sets">— ${setDetails}</span>` : ''}</div>`;
         }
 
         const parts = [];
         if (e.sets) parts.push(`${e.sets} sets`);
         if (e.reps) parts.push(`x ${e.reps} reps`);
         if (e.weight) parts.push(`@ ${e.weight}kg`);
-        const legacyText = parts.join(' ');
-        return `<div style="margin:0; line-height:1.2;"><span style="color: blue;">${name}</span>${variation}: ${legacyText}${noteText}</div>`;
+        const legacyText = escapeExerciseHtml(parts.join(' '));
+        return `<div class="saved-workout-exercise"><span class="saved-workout-exercise-name">${name}</span>${variation}: ${legacyText}${noteText}</div>`;
       }).join('');
 
-      const result = workout.result ? `<div style="margin:0.2rem 0 0 0; line-height:1.2;"><span style="color: darkorange;">Result: ${workout.result}</span></div>` : '';
+      const footer = workout.result
+        ? `<div class="saved-workout-footer"><span class="saved-workout-label">Result</span> ${escapeExerciseHtml(workout.result)}</div>`
+        : '';
       const workoutDiv = document.createElement('div');
       workoutDiv.className = 'saved-workout';
-      workoutDiv.style.marginBottom = '1rem';
       workoutDiv.innerHTML = `
-        <div style="margin:0; line-height:1.2;">${dateText}</div>
-        <div style="margin:0; line-height:1.2;">${intensityText}${intensityText && durationText ? ' ' : ''}${durationText}${(intensityText || durationText) && intensityNoteText ? ' ' : ''}${intensityNoteText}</div>
-        ${exercises}
-        ${result}
+        <div class="saved-workout-header">
+          <div class="saved-workout-title">${editBtn}<strong>${escapeExerciseHtml(title)}</strong>${meta}</div>
+          ${notes}
+        </div>
+        ${exercises ? `<div class="saved-workout-body">${exercises}</div>` : ''}
+        ${footer}
       `;
       savedWorkoutList.appendChild(workoutDiv);
     });
@@ -3245,10 +3340,8 @@ function setWorkoutsMode(mode) {
   workoutsListModeBtn.setAttribute('aria-pressed', String(showList));
   workoutsEditorModeBtn.classList.toggle('exo-btn-active', !showList);
   workoutsEditorModeBtn.setAttribute('aria-pressed', String(!showList));
-  ['workout-year-filter', 'workout-month-filter'].forEach((id) => {
-    const filter = document.getElementById(id);
-    if (filter) filter.style.display = showList ? 'inline' : 'none';
-  });
+  document.getElementById('addPastWorkoutBtn')?.classList.toggle('hidden', showList);
+  document.getElementById('workoutListFilters')?.classList.toggle('hidden', !showList);
   if (showList) renderSavedWorkouts();
   else savedWorkoutList.innerHTML = '';
   savedWorkoutList.classList.toggle('hidden', !showList);
@@ -3256,6 +3349,20 @@ function setWorkoutsMode(mode) {
 }
 
 workoutsListModeBtn.addEventListener('click', () => setWorkoutsMode('list'));
+
+// Pencil next to "Workout on …": open that workout in the editor.
+savedWorkoutList.addEventListener('click', (event) => {
+  const editBtn = event.target.closest('.saved-workout-edit-btn');
+  if (!editBtn) return;
+  const index = workoutKeys.indexOf(editBtn.dataset.workoutKey);
+  if (index === -1) {
+    showNotice('Could not find that workout in the editor. Try again in a moment.', 'error');
+    return;
+  }
+  setWorkoutsMode('editor');
+  currentIndex = index;
+  displayCurrentNode();
+});
 workoutsEditorModeBtn.addEventListener('click', () => setWorkoutsMode('editor'));
 
 workoutButton.addEventListener('click', () => {
@@ -3364,6 +3471,7 @@ function resetPrivateUi() {
 
   selectedExercises.length = 0;
   renderExerciseList();
+  currentWorkout.name = '';
   currentWorkout.intensity = '';
   currentWorkout.intensityNote = '';
   startTime = null;

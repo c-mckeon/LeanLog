@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-B0L3udgo.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-edTIx_qQ.css">
 </head>
 <body>
   <!-- One-time consent on first sign-in (GDPR). cognito-session.js shows it; the backend records it
@@ -32,6 +32,29 @@
         <a id="consentDeclineLink" class="consent-decline" href="#">Decline and log out</a>
       </div>
     </div>
+  </div>
+
+  <!-- First-login details, shown right after the consent box (cognito-session.js). More fields can
+       join the fieldset later; bump ONBOARDING_VERSION in backend/app.js to ask everyone again. -->
+  <div id="onboardingOverlay" class="consent-overlay" hidden>
+    <form id="onboardingForm" class="consent-card onboarding-card" role="dialog" aria-modal="true" aria-labelledby="onboardingTitle" novalidate>
+      <h2 id="onboardingTitle" class="consent-title">Welcome to LeanLog</h2>
+      <p>What should we call you?</p>
+      <fieldset class="onboarding-fields">
+        <label class="onboarding-field">
+          <span>First name</span>
+          <input type="text" id="onboardingGivenName" class="form-control" maxlength="60" autocomplete="given-name" required>
+        </label>
+        <label class="onboarding-field">
+          <span>Last name</span>
+          <input type="text" id="onboardingFamilyName" class="form-control" maxlength="60" autocomplete="family-name">
+        </label>
+      </fieldset>
+      <p id="onboardingError" class="onboarding-error" hidden></p>
+      <div class="consent-actions">
+        <button type="submit" id="onboardingSaveBtn" class="btn btn-success">Continue</button>
+      </div>
+    </form>
   </div>
 
   <div class="header" style="display: inline-flex; align-items: center; margin-left: 20px;">
@@ -167,6 +190,11 @@
           <button type="button" id="applyTargetsForwardBtn" class="exo-btn" style="margin-top:8px;">Apply to future months</button>
           <span id="targetsSaveStatus" class="settings-empty" style="margin-left:8px;"></span>
         </div>
+      </div>
+
+      <!-- Shown only when signed in (not in demo mode); see cognito-session.js -->
+      <div id="deleteAccountBlock" class="settings-section-block settings-danger" hidden>
+        <button type="button" id="deleteAccountBtn" class="settings-delete-account">Delete account</button>
       </div>
     </div>
   </div>

@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-edTIx_qQ.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-D90fMXjP.css">
 </head>
 <body>
   <!-- One-time consent on first sign-in (GDPR). cognito-session.js shows it; the backend records it
@@ -69,8 +69,13 @@
   <div id="settingsMenu" class="settings-menu">
     <button type="button" id="settingsGearBtn" class="settings-gear-btn" aria-label="Open settings" aria-expanded="false" aria-controls="settingsPanel"><svg class="settings-gear-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M10.17 4.62L10.59 2.1H13.41L13.83 4.62A7.6 7.6 0 0 1 15.92 5.49L18 4L20 6L18.51 8.08A7.6 7.6 0 0 1 19.38 10.17L21.9 10.59V13.41L19.38 13.83A7.6 7.6 0 0 1 18.51 15.92L20 18L18 20L15.92 18.51A7.6 7.6 0 0 1 13.83 19.38L13.41 21.9H10.59L10.17 19.38A7.6 7.6 0 0 1 8.08 18.51L6 20L4 18L5.49 15.92A7.6 7.6 0 0 1 4.62 13.83L2.1 13.41V10.59L4.62 10.17A7.6 7.6 0 0 1 5.49 8.08L4 6L6 4L8.08 5.49A7.6 7.6 0 0 1 10.17 4.62Z"/><circle cx="12" cy="12" r="3"/></svg></button>
     <div id="settingsPanel" class="settings-panel hidden" role="menu" aria-label="Site settings">
+      <!-- Each section: a header (name, and its include checkbox) and a body that starts collapsed;
+           the name button opens and closes it (see app.js, "Settings sections") -->
       <div class="settings-section-block">
-        <div class="settings-section-title">Workout Builder</div>
+        <div class="settings-section-header">
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyBuilder">Workout Builder</button>
+        </div>
+        <div id="settingsBodyBuilder" class="settings-section-body" hidden>
         <label class="settings-checkbox-row" for="showWeightMovedSetting">
           <input type="checkbox" id="showWeightMovedSetting" checked>
           <span>Show weight moved</span>
@@ -106,34 +111,37 @@
           <input type="checkbox" id="autoStartClockSetting" checked>
           <span>Start clock automatically</span>
         </label>
+        </div>
+      </div>
+
+      <!-- Sections with no settings of their own: just the name and checkbox -->
+      <div class="settings-section-block">
+        <div class="settings-section-header">
+          <span class="settings-section-name">Exercises</span>
+          <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked title="Include this section" aria-label="Include Exercises">
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeAddEditSetting" title="Include this section">
-          <span>Exercises</span>
-          <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked>
-        </label>
+        <div class="settings-section-header">
+          <span class="settings-section-name">Show Workouts</span>
+          <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked title="Include this section" aria-label="Include Show Workouts">
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeWorkoutsSetting" title="Include this section">
-          <span>Show Workouts</span>
-          <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked>
-        </label>
+        <div class="settings-section-header">
+          <span class="settings-section-name">Metrics</span>
+          <input type="checkbox" id="includeBioSetting" data-section-setting="bio" checked title="Include this section" aria-label="Include Metrics">
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeBioSetting" title="Include this section">
-          <span>Metrics</span>
-          <input type="checkbox" id="includeBioSetting" data-section-setting="bio" checked>
-        </label>
-      </div>
-
-      <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeCalendarSetting" title="Include this section">
-          <span>Calendar</span>
-          <input type="checkbox" id="includeCalendarSetting" data-section-setting="calendar" checked>
-        </label>
+        <div class="settings-section-header">
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyCalendar">Calendar</button>
+          <input type="checkbox" id="includeCalendarSetting" data-section-setting="calendar" checked title="Include this section" aria-label="Include Calendar">
+        </div>
+        <div id="settingsBodyCalendar" class="settings-section-body" hidden>
         <label class="settings-label" for="calendarLayoutSetting">Layout</label>
         <select id="calendarLayoutSetting" class="form-control form-control-sm settings-select">
           <option value="horizontal">Horizontal (months side by side)</option>
@@ -164,22 +172,26 @@
             <option value="yearEnd">Year end</option>
           </select>
         </div>
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeProgressSetting" title="Include this section">
-          <span>Progress</span>
-          <input type="checkbox" id="includeProgressSetting" data-section-setting="progress" checked>
-        </label>
+        <div class="settings-section-header">
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyProgress">Progress</button>
+          <input type="checkbox" id="includeProgressSetting" data-section-setting="progress" checked title="Include this section" aria-label="Include Progress">
+        </div>
+        <div id="settingsBodyProgress" class="settings-section-body" hidden>
         <button type="button" id="trackedExercisesToggleBtn" class="settings-link-btn" aria-expanded="false" aria-controls="trackedExercisesPanel">Select exercises to track</button>
         <div id="trackedExercisesPanel" class="tracked-exercises-panel hidden"></div>
+        </div>
       </div>
 
       <div class="settings-section-block">
-        <label class="settings-section-title settings-section-toggle" for="includeVolumeSetting" title="Include this section">
-          <span>Volume</span>
-          <input type="checkbox" id="includeVolumeSetting" data-section-setting="volume" checked>
-        </label>
+        <div class="settings-section-header">
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyVolume">Volume</button>
+          <input type="checkbox" id="includeVolumeSetting" data-section-setting="volume" checked title="Include this section" aria-label="Include Volume">
+        </div>
+        <div id="settingsBodyVolume" class="settings-section-body" hidden>
         <button type="button" id="volumeTargetsToggleBtn" class="settings-link-btn" aria-expanded="false" aria-controls="volumeTargetsPanel">Set volume targets</button>
         <div id="volumeTargetsPanel" class="tracked-exercises-panel volume-targets-panel hidden">
           <label class="settings-label" for="targetMonthSelect">Month</label>
@@ -190,11 +202,17 @@
           <button type="button" id="applyTargetsForwardBtn" class="exo-btn" style="margin-top:8px;">Apply to future months</button>
           <span id="targetsSaveStatus" class="settings-empty" style="margin-left:8px;"></span>
         </div>
+        </div>
       </div>
 
       <!-- Shown only when signed in (not in demo mode); see cognito-session.js -->
       <div id="deleteAccountBlock" class="settings-section-block settings-danger" hidden>
-        <button type="button" id="deleteAccountBtn" class="settings-delete-account">Delete account</button>
+        <div class="settings-section-header">
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyAccount">Account</button>
+        </div>
+        <div id="settingsBodyAccount" class="settings-section-body" hidden>
+          <button type="button" id="deleteAccountBtn" class="settings-delete-account">Delete account</button>
+        </div>
       </div>
     </div>
   </div>
@@ -345,17 +363,15 @@
               </div>
             </div>
 
-            <form id="addExerciseForm" class="exo-add-form" hidden>
-                <div class="exo-add-field">
-                  <label for="newExerciseName">Exercise Name</label>
-                  <input type="text" id="newExerciseName" placeholder="Enter exercise name" required>
+            <form id="addExerciseForm" class="exo-add-form" hidden novalidate>
+              <div class="exo-add-main">
+                <div class="exo-add-field exo-add-name">
+                  <label for="newExerciseName">Name</label>
+                  <input type="text" id="newExerciseName" placeholder="e.g. Bulgarian split squat" maxlength="60" autocomplete="off">
+                  <div id="newExerciseHint" class="field-hint field-hint-error" role="alert" hidden></div>
                 </div>
-                <div class="exo-add-field">
-                  <label for="newExerciseNote">Add exercise note</label>
-                  <input type="text" id="newExerciseNote" placeholder="Add exercise note?">
-                </div>
-                <div class="exo-add-field">
-                  <label for="exerciseCategory">Choose Category</label>
+                <div class="exo-add-field exo-add-category">
+                  <label for="exerciseCategory">Category</label>
                   <select id="exerciseCategory"></select>
                   <!-- "Add new category": replaces the dropdown with a name box -->
                   <div id="categoryAddRow" class="category-inline" hidden>
@@ -374,8 +390,35 @@
                     <button type="button" id="doneRemovingCategoriesBtn" class="exo-btn exo-btn-sm">Done</button>
                   </div>
                 </div>
+                <div class="exo-add-field exo-add-variations">
+                  <span class="exo-add-label">Variations <span class="exo-optional">(optional)</span></span>
+                  <div id="customVariationChips"></div>
+                  <div class="exo-add-variation-own">
+                    <input type="text" id="customVariationInput" placeholder="Add your own, e.g. Smith machine" maxlength="40" autocomplete="off" aria-label="Add your own variation">
+                    <button type="button" id="customVariationAddBtn" class="exo-btn exo-btn-sm">Add</button>
+                  </div>
+                </div>
+                <div class="exo-add-field exo-add-note">
+                  <label for="newExerciseNote">Note <span class="exo-optional">(optional)</span></label>
+                  <input type="text" id="newExerciseNote" placeholder="e.g. Seat on notch 4, slow on the way down" maxlength="300" autocomplete="off">
+                </div>
+              </div>
 
-                <button type="button" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">Add Exercise</button>
+              <!-- Right side: the exercise as it will be saved, with its target muscle groups -->
+              <aside class="exo-add-model" aria-label="New exercise">
+                <div class="exo-add-model-title">
+                  <strong id="newExerciseModelName">New exercise</strong>
+                  <span id="newExerciseModelCategory" class="exo-hint"></span>
+                </div>
+                <div id="newExerciseModelVariations" class="exo-add-model-variations"></div>
+                <h4 class="exo-add-model-heading">Target groups <small>(volume tracking)</small></h4>
+                <p class="exo-hint">How much each muscle group counts for this exercise: 1 = primary, lower = assisting. Leave blank for none. Applies to every variation; you can set variations separately later in the Exercise Editor.</p>
+                <div id="newExerciseTargets"></div>
+              </aside>
+
+                <div class="exo-add-actions">
+                  <button type="submit" id="saveNewExerciseBtn" class="exo-btn exo-btn-primary">Add exercise</button>
+                </div>
             </form>
           </div>
         </section> 

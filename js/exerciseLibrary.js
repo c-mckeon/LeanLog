@@ -8,6 +8,14 @@
 //
 // To grow the library, add entries here. Keep variation names short and readable
 // on their own (they show next to the exercise in the workout builder).
+// Variations offered for an exercise made with "Create your own", grouped the same way.
+window.COMMON_VARIATIONS = {
+  Equipment: ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Kettlebell', 'Bodyweight', 'Band'],
+  Position: ['Incline', 'Decline', 'Seated', 'Standing'],
+  'Grip & stance': ['Wide', 'Close', 'Neutral grip', 'Single arm', 'Single leg'],
+  Tempo: ['Paused', 'Slow lowering']
+};
+
 window.EXERCISE_LIBRARY = [
   // Upper Body Push
   { name: 'Bench Press', category: 'Upper Body Push', variations: { Equipment: ['Barbell', 'Dumbbell', 'Smith machine', 'Machine'], Angle: ['Incline', 'Decline'], Grip: ['Close grip', 'Wide grip'], Tempo: ['Paused'] } },

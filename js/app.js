@@ -544,6 +544,19 @@ function escapeExerciseHtml(value) {
   })[character]);
 }
 
+// Settings sections: the name button opens and closes the section's settings. Every section starts
+// collapsed; a deselected one has nothing to show, so it stays shut.
+settingsPanel?.addEventListener('click', (event) => {
+  const button = event.target.closest('.settings-section-collapse');
+  if (!button) return;
+  const body = document.getElementById(button.getAttribute('aria-controls'));
+  const include = button.closest('.settings-section-header')?.querySelector('input[type="checkbox"]');
+  if (!body || (include && !include.checked)) return;
+  const open = button.getAttribute('aria-expanded') !== 'true';
+  button.setAttribute('aria-expanded', String(open));
+  body.hidden = !open;
+});
+
 if (settingsGearBtn && settingsPanel) {
   settingsGearBtn.addEventListener('click', () => {
     const isHidden = settingsPanel.classList.toggle('hidden');
@@ -754,6 +767,7 @@ function closeCategoryEditors(selectValue = lastChosenCategory) {
   renderExerciseCategoryOptions();
   if (exerciseCategories.includes(selectValue)) exerciseCategory.value = selectValue;
   lastChosenCategory = exerciseCategory.value;
+  if (typeof renderNewExerciseModel === 'function') renderNewExerciseModel();
 }
 
 function openAddCategory() {
@@ -894,29 +908,165 @@ async function postToWorkoutApi(path, body) {
   return requestWorkoutApi(path, 'POST', body);
 }
 
-saveNewExerciseBtn.addEventListener('click', async () => {
-    const name = newExerciseName.value.trim();
-    const category = exerciseCategory.value;
+// "Create your own": the button submits the form, so Enter in Name or Note adds the exercise too
+const newExerciseNote = document.getElementById('newExerciseNote');
+const newExerciseHint = document.getElementById('newExerciseHint');
 
-    if (!name) {
-        showNotice('Please enter an exercise name.', 'error');
-        return;
-    }
+function setNewExerciseProblem(message) {
+  newExerciseName.classList.toggle('input-invalid', Boolean(message));
+  newExerciseHint.textContent = message;
+  newExerciseHint.hidden = !message;
+  if (message) newExerciseName.focus();
+}
 
-    try {
-      await postToWorkoutApi('/api/exercises', {
-        name,
-        category,
-        focusAreas: [],
-        fields: ['sets', 'reps', 'weight']
-      });
-      newExerciseName.value = '';
-      await loadExercises();
-      if (window.refreshTrackedExercises) window.refreshTrackedExercises();
-      collapseAddEditSection();
-    } catch (error) {
-      showNotice(error.message, 'error');
-    }
+newExerciseName.addEventListener('input', () => setNewExerciseProblem(''));
+
+// Variations for "Create your own": tick common ones (window.COMMON_VARIATIONS) or add your own
+const customVariationChips = document.getElementById('customVariationChips');
+const customVariationInput = document.getElementById('customVariationInput');
+let ownVariations = [];
+
+function getCheckedCustomVariations() {
+  return [...customVariationChips.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
+}
+
+function renderCustomVariationChips() {
+  const checked = new Set(getCheckedCustomVariations());
+  const groups = Object.entries(window.COMMON_VARIATIONS || {});
+  if (ownVariations.length) groups.push(['Your own', ownVariations]);
+  customVariationChips.innerHTML = groups.map(([group, values]) => `
+    <div class="library-variation-group">
+      <span class="library-variation-type">${escapeExerciseHtml(group)}</span>
+      ${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}" ${checked.has(value) ? 'checked' : ''}> ${escapeExerciseHtml(value)}</label>`).join('')}
+    </div>`).join('');
+}
+
+// Adds the typed variation as a ticked chip (or ticks the existing one with that name)
+function addOwnVariation() {
+  const value = customVariationInput.value.trim();
+  if (!value) return customVariationInput.focus();
+  const known = [...Object.values(window.COMMON_VARIATIONS || {}).flat(), ...ownVariations];
+  const name = known.find((variation) => variation.toLowerCase() === value.toLowerCase()) || value;
+  if (!known.includes(name)) ownVariations.push(name);
+  renderCustomVariationChips();
+  const box = [...customVariationChips.querySelectorAll('input[type="checkbox"]')].find((input) => input.value === name);
+  if (box) box.checked = true;
+  customVariationInput.value = '';
+  customVariationInput.focus();
+  renderNewExerciseModel();
+}
+
+document.getElementById('customVariationAddBtn').addEventListener('click', addOwnVariation);
+customVariationInput.addEventListener('keydown', (event) => {
+  // Enter adds the variation instead of the whole exercise
+  if (event.key === 'Enter') { event.preventDefault(); addOwnVariation(); }
+});
+renderCustomVariationChips();
+
+// Right side of "Create your own": the exercise as it will be saved, and how much each
+// muscle group counts for it (saved as the exercise's default volume mappings)
+let newExerciseTargets = {}; // muscle group -> contribution typed so far
+
+function renderNewExerciseModel() {
+  const name = newExerciseName.value.trim();
+  const category = exerciseCategories.includes(exerciseCategory.value) ? exerciseCategory.value : '';
+  document.getElementById('newExerciseModelName').textContent = name || 'New exercise';
+  document.getElementById('newExerciseModelCategory').textContent = category;
+  const variations = getCheckedCustomVariations();
+  document.getElementById('newExerciseModelVariations').innerHTML = variations.length
+    ? ['Default', ...variations].map((variation) => `<span>${escapeExerciseHtml(variation)}</span>`).join('')
+    : '<span class="exo-hint">No variations</span>';
+}
+
+function renderNewExerciseTargets() {
+  const container = document.getElementById('newExerciseTargets');
+  if (!volumeGroupsLoaded) {
+    container.innerHTML = '<p class="exo-hint">Loading muscle groups…</p>';
+    ensureVolumeGroups().then(renderNewExerciseTargets);
+    return;
+  }
+  if (!volumeMuscleGroups.length) {
+    container.innerHTML = '<p class="exo-hint">No muscle groups yet. Add them in the Exercise Editor\'s Target Groups.</p>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="exo-volume-table">
+      <thead><tr><th>Muscle group</th><th>Contribution</th></tr></thead>
+      <tbody>${volumeMuscleGroups.map((group) => `
+        <tr>
+          <td>${escapeExerciseHtml(group)}</td>
+          <td><input type="number" class="exo-add-target-input" data-group="${escapeExerciseHtml(group)}" min="0" max="1" step="0.05" placeholder="0"
+            value="${newExerciseTargets[group] > 0 ? newExerciseTargets[group] : ''}" aria-label="Contribution for ${escapeExerciseHtml(group)}"></td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+function getNewExerciseVolumeMappings() {
+  return Object.entries(newExerciseTargets)
+    .filter(([group, weight]) => volumeMuscleGroups.includes(group) && weight > 0)
+    .map(([muscleGroup, weight]) => ({ variation: '', muscleGroup, weight: Math.min(weight, 1) }));
+}
+
+document.getElementById('newExerciseTargets').addEventListener('input', (event) => {
+  const input = event.target.closest('.exo-add-target-input');
+  if (!input) return;
+  const weight = parseFloat(input.value);
+  if (Number.isFinite(weight) && weight > 0) newExerciseTargets[input.dataset.group] = weight;
+  else delete newExerciseTargets[input.dataset.group];
+});
+newExerciseName.addEventListener('input', renderNewExerciseModel);
+exerciseCategory.addEventListener('change', renderNewExerciseModel);
+customVariationChips.addEventListener('change', renderNewExerciseModel);
+document.getElementById('addCustomBtn')?.addEventListener('click', () => {
+  renderNewExerciseModel();
+  renderNewExerciseTargets();
+});
+
+document.getElementById('addExerciseForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const name = newExerciseName.value.trim();
+  const category = exerciseCategory.value;
+
+  if (!name) return setNewExerciseProblem('Enter a name for the exercise.');
+  if (getExistingExerciseNames().has(name.toLowerCase())) return setNewExerciseProblem(`You already have "${name}".`);
+  if (!exerciseCategories.includes(category)) {
+    showNotice('Choose a category first.', 'error');
+    return exerciseCategory.focus();
+  }
+
+  // A variation typed but not yet added counts too
+  const typedVariation = customVariationInput.value.trim();
+  const variations = [...new Set([...getCheckedCustomVariations(), ...(typedVariation ? [typedVariation] : [])])];
+
+  try {
+    saveNewExerciseBtn.disabled = true;
+    await postToWorkoutApi('/api/exercises', {
+      name,
+      category,
+      note: newExerciseNote.value.trim(),
+      variations,
+      volumeMappings: getNewExerciseVolumeMappings(),
+      focusAreas: [],
+      fields: ['sets', 'reps', 'weight']
+    });
+    newExerciseName.value = '';
+    newExerciseNote.value = '';
+    customVariationInput.value = '';
+    ownVariations = [];
+    customVariationChips.innerHTML = '';
+    renderCustomVariationChips();
+    newExerciseTargets = {};
+    renderNewExerciseModel();
+    renderNewExerciseTargets();
+    await loadExercises();
+    refreshExerciseEditor();
+    if (window.refreshTrackedExercises) window.refreshTrackedExercises();
+    collapseAddEditSection();
+  } catch (error) {
+    showNotice(error.message, 'error');
+  } finally {
+    saveNewExerciseBtn.disabled = false;
+  }
 });
 
 //-////////////////////////////////////////////////////////////////////// Add from library
@@ -1010,7 +1160,10 @@ function selectLibraryExercise(name) {
 
 async function addSelectedLibraryExercise() {
   if (!selectedLibraryExercise) return;
-  const { name, category } = selectedLibraryExercise;
+  const { name } = selectedLibraryExercise;
+  // Use the user's own spelling of the category ("Upper-Body Push" for the library's "Upper Body Push")
+  const category = exerciseCategories.find((existing) =>
+    normalizeCategoryName(existing) === normalizeCategoryName(selectedLibraryExercise.category)) || selectedLibraryExercise.category;
   const variations = [...libraryVariations.querySelectorAll('input[type="checkbox"]:checked')].map((input) => input.value);
 
   try {
@@ -1026,6 +1179,7 @@ async function addSelectedLibraryExercise() {
     librarySelection.hidden = true;
     if (librarySearch) librarySearch.value = '';
     await loadExercises();
+    refreshExerciseEditor();
     if (window.refreshTrackedExercises) window.refreshTrackedExercises();
     collapseAddEditSection();
   } catch (error) {
@@ -1875,6 +2029,7 @@ var currentExerciseCategory = null;    // will be set by the category selector
 var exerciseKeys = [];                 // Firebase keys for exercises in the selected category
 var exerciseDataMap = {};             // exercise metadata keyed by Firebase ID
 var currentExerciseIndex = 0;
+var pendingVariationNames = {};       // unsaved "Variation name" edits: original name -> typed name
 
 function loadCategories() {
   const selector = document.getElementById('categorySelector');
@@ -1898,6 +2053,27 @@ function loadCategories() {
     exerciseDataMap = {};
     renderExerciseSelector();
     document.getElementById('exerciseeditorsection').innerHTML = '<p>No exercises found.</p>';
+  }
+}
+
+// Reload the editor from the latest exercise list (e.g. after adding an exercise),
+// staying on the category and exercise that were showing.
+function refreshExerciseEditor() {
+  const previousCategory = currentExerciseCategory;
+  const previousExerciseId = getCurrentExerciseId();
+  loadCategories();
+
+  const selector = document.getElementById('categorySelector');
+  if (!selector || !previousCategory || ![...selector.options].some((option) => option.value === previousCategory)) return;
+  selector.value = previousCategory;
+  currentExerciseCategory = previousCategory;
+  loadExercisesEditor();
+
+  const index = exerciseKeys.indexOf(previousExerciseId);
+  if (index > 0) {
+    currentExerciseIndex = index;
+    renderExerciseSelector();
+    displayExercise();
   }
 }
 
@@ -2035,7 +2211,8 @@ async function saveNewVariation() {
   const variationName = newVariationInput.value.trim();
   if (!variationName) return newVariationInput.focus();
 
-  const existing = editorVariations.find((variation) => variation.toLowerCase() === variationName.toLowerCase());
+  const existing = [...editorVariations, ...Object.values(pendingVariationNames).map((typed) => typed.trim())]
+    .find((variation) => variation.toLowerCase() === variationName.toLowerCase());
   if (existing) {
     newVariationInput.classList.add('input-invalid');
     setVariationHint(`"${existing}" already exists`);
@@ -2089,6 +2266,7 @@ if (removeExerciseVariationButton) {
       await persistExerciseUpdates(exerciseId, { variations: updatedVariations, volumeMappings: updatedMappings });
       editorVariations = updatedVariations;
       editorVolumeMappings = updatedMappings;
+      delete pendingVariationNames[currentVariation];
       currentVariation = '';
       renderVariationSelector();
       renderVolumeTracking();
@@ -2147,9 +2325,120 @@ function renderVariationSelector() {
 }
 
 function updateVariationButtons() {
+  renderVariationNameField();
   const hasExercise = exerciseKeys.length > 0;
   if (addExerciseVariationButton) addExerciseVariationButton.disabled = !hasExercise;
   if (removeExerciseVariationButton) removeExerciseVariationButton.disabled = !hasExercise || !currentVariation;
+}
+
+// "Variation name" in Exercise Details: shows the selected variation (hidden for the default).
+// A typed name is kept per variation until Save, so switching variation doesn't lose it.
+function renderVariationNameField() {
+  const container = document.getElementById('variationNameContainer');
+  const input = document.getElementById('exercise_variation_name');
+  if (!container || !input) return;
+  container.hidden = !currentVariation;
+  input.value = pendingVariationNames[currentVariation] ?? currentVariation;
+  input.classList.remove('input-invalid');
+}
+
+function trackVariationNameInput(event) {
+  if (!currentVariation) return;
+  const typed = event.target.value;
+  if (typed.trim() === currentVariation) delete pendingVariationNames[currentVariation];
+  else pendingVariationNames[currentVariation] = typed;
+  event.target.classList.remove('input-invalid');
+}
+
+// Renames whose history (past workouts etc.) isn't updated yet are queued on the exercise as
+// pendingVariationRenames, saved together with the new name. They're worked through in order and
+// removed once done; anything left is retried on the next Save or when the app opens.
+function normalizePendingRenames(raw) {
+  return Object.values(raw || {})
+    .filter((rename) => typeof rename?.from === 'string' && typeof rename?.to === 'string');
+}
+
+const variationRenameRuns = {};
+
+function applyPendingVariationRenames(exerciseId) {
+  const run = async () => {
+    const queueRef = database.ref(`${getExerciseDataPath(exerciseId)}/pendingVariationRenames`);
+    const queue = normalizePendingRenames((await queueRef.once('value')).val());
+    if (!queue.length) return;
+    // Keep this page's copies of the exercise in step, so the next Save queues only what's left
+    const setLocalQueue = () => {
+      [exerciseDataMap[exerciseId], ...Object.values(exerciseCatalogByCategory || {}).map((bucket) => bucket?.[exerciseId])]
+        .forEach((record) => {
+          if (!record) return;
+          if (queue.length) record.pendingVariationRenames = [...queue];
+          else delete record.pendingVariationRenames;
+        });
+    };
+    while (queue.length) {
+      await renameVariationInHistory(exerciseId, queue[0].from, queue[0].to);
+      queue.shift();
+      await (queue.length ? queueRef.set(queue) : queueRef.remove());
+      setLocalQueue();
+    }
+    refreshAfterWorkoutSaved();
+    if (window.refreshTrackedExercises) window.refreshTrackedExercises();
+  };
+  // One run at a time per exercise
+  variationRenameRuns[exerciseId] = (variationRenameRuns[exerciseId] || Promise.resolve()).catch(() => {}).then(run);
+  return variationRenameRuns[exerciseId];
+}
+
+// When the app opens: finish renames that didn't get through last time
+function retryPendingVariationRenames() {
+  Object.values(exerciseCatalogByCategory || {}).forEach((bucket) => {
+    Object.entries(bucket || {}).forEach(([exerciseId, exercise]) => {
+      if (!normalizePendingRenames(exercise?.pendingVariationRenames).length) return;
+      applyPendingVariationRenames(exerciseId)
+        .catch((error) => console.error('Could not finish renaming a variation in past workouts:', error));
+    });
+  });
+}
+
+// A renamed variation keeps its history: past workouts, e1RM entries and the
+// Progress tracking choice move to the new name. Safe to run again.
+async function renameVariationInHistory(exerciseId, from, to) {
+  const [workoutsSnapshot, e1rmSnapshot, trackedSnapshot] = await Promise.all([
+    database.ref('workouts').once('value'),
+    database.ref('estimoneRepMax').once('value'),
+    database.ref('settings/progress/trackedExercises').once('value')
+  ]);
+
+  const workoutUpdates = {};
+  Object.entries(workoutsSnapshot.val() || {}).forEach(([workoutId, workout]) => {
+    Object.entries(workout?.exercises || {}).forEach(([index, exercise]) => {
+      if (exercise?.id === exerciseId && typeof exercise.variation === 'string' && exercise.variation.trim() === from) {
+        workoutUpdates[`${workoutId}/exercises/${index}/variation`] = to;
+      }
+    });
+  });
+
+  const e1rmUpdates = {};
+  Object.entries(e1rmSnapshot.val() || {}).forEach(([entryId, entry]) => {
+    if (entry?.exercise === exerciseId && typeof entry.variation === 'string' && entry.variation.trim() === from) {
+      e1rmUpdates[`${entryId}/variation`] = to;
+    }
+  });
+
+  const trackedUpdates = {};
+  const tracked = trackedSnapshot.val() || {};
+  if (typeof progressKey === 'function') {
+    const oldKey = progressKey(exerciseId, from);
+    if (oldKey in tracked) {
+      trackedUpdates[progressKey(exerciseId, to)] = tracked[oldKey];
+      trackedUpdates[oldKey] = null;
+    }
+  }
+
+  await Promise.all([
+    Object.keys(workoutUpdates).length && database.ref('workouts').update(workoutUpdates),
+    Object.keys(e1rmUpdates).length && database.ref('estimoneRepMax').update(e1rmUpdates),
+    Object.keys(trackedUpdates).length && database.ref('settings/progress/trackedExercises').update(trackedUpdates)
+  ]);
 }
 
 // Display the selected exercise: details, its variations, and the volume mappings of the selected variation.
@@ -2160,6 +2449,7 @@ function displayExercise() {
   const data = exerciseId && exerciseDataMap[exerciseId];
 
   currentVariation = '';
+  pendingVariationNames = {};
   if (!data) {
     editorVariations = [];
     editorVolumeMappings = [];
@@ -2182,6 +2472,10 @@ function displayExercise() {
       <label for="exercise_name">Name</label>
       <input type="text" id="exercise_name" value="${escapeExerciseHtml(data.name)}">
     </div>
+    <div class="exo-field" id="variationNameContainer" hidden>
+      <label for="exercise_variation_name">Variation name</label>
+      <input type="text" id="exercise_variation_name" maxlength="40">
+    </div>
     <div class="exo-field">
       <label for="exercise_note">Notes</label>
       <textarea id="exercise_note" rows="3">${escapeExerciseHtml(data.note)}</textarea>
@@ -2200,6 +2494,7 @@ function displayExercise() {
   const counter = document.getElementById('exerciseCounter');
   if (counter) counter.textContent = `Exercise ${currentExerciseIndex + 1} of ${exerciseKeys.length}`;
   setupExerciseTrackingToggle();
+  document.getElementById('exercise_variation_name')?.addEventListener('input', trackVariationNameInput);
   renderVariationSelector();
   renderVolumeTracking();
 }
@@ -2486,6 +2781,38 @@ function saveexo() {
     return;
   }
 
+  // Variation renames typed in "Variation name", for any variation (not just the one showing).
+  // A new name can't be another variation's current name, so renames never swap or chain.
+  const renames = [];
+  for (const [from, typed] of Object.entries(pendingVariationNames)) {
+    if (!editorVariations.includes(from)) continue;
+    const to = typed.trim();
+    if (to === from) continue;
+    const problem = !to ? 'Variation name is required.'
+      : editorVariations.some((variation) => variation !== from && variation.toLowerCase() === to.toLowerCase())
+        ? `"${to}" is already a variation.`
+        : renames.some((rename) => rename.to.toLowerCase() === to.toLowerCase())
+          ? `Two variations can't both be called "${to}".`
+          : '';
+    if (problem) {
+      // Show the variation with the problem
+      if (from !== currentVariation) {
+        currentVariation = from;
+        renderVariationSelector();
+        renderVolumeTracking();
+      }
+      document.getElementById('exercise_variation_name')?.classList.add('input-invalid');
+      showNotice(problem, 'error');
+      return;
+    }
+    renames.push({ from, to });
+  }
+  const renameMap = new Map(renames.map((rename) => [rename.from, rename.to]));
+  const renamed = (variation) => renameMap.get(variation) ?? variation;
+  const historyQueue = [...normalizePendingRenames(exerciseDataMap[exerciseId]?.pendingVariationRenames), ...renames];
+  const savedVariations = editorVariations.map(renamed);
+  const savedMappings = editorVolumeMappings.map((mapping) => ({ ...mapping, variation: renamed(mapping.variation) }));
+
   const seen = new Set();
   for (const mapping of editorVolumeMappings) {
     const key = `${mapping.variation}\u0000${mapping.muscleGroup}`;
@@ -2510,13 +2837,37 @@ function saveexo() {
     note: document.getElementById("exercise_note").value,
     fields: storedFields,
     customLabel: fields.includes('custom') && customLabelInput ? customLabelInput.value || '' : '',
-    variations: editorVariations,
-    volumeMappings: editorVolumeMappings
+    variations: savedVariations,
+    volumeMappings: savedMappings,
+    // Saved with the new names, so past workouts get renamed even if that step fails now
+    pendingVariationRenames: historyQueue.length ? historyQueue : null
   };
 
   persistExerciseUpdates(exerciseId, updatedData)
-    .then(() => {
-      showNotice("Exercise updated successfully!", 'success');
+    .then(async () => {
+      editorVariations = savedVariations;
+      editorVolumeMappings = savedMappings;
+      pendingVariationNames = {};
+      if (renames.length) {
+        currentVariation = renamed(currentVariation);
+        renderVariationSelector();
+        renderVolumeTracking();
+        selectedExercises.forEach((exercise) => {
+          if (exercise.id === exerciseId && renameMap.has(exercise.variation)) exercise.variation = renamed(exercise.variation);
+        });
+      }
+      let historyError = null;
+      if (historyQueue.length) {
+        try {
+          await applyPendingVariationRenames(exerciseId);
+        } catch (error) {
+          historyError = error;
+          console.error('Error renaming variation in past workouts:', error);
+        }
+      }
+      showNotice(historyError
+        ? 'Exercise saved, but past workouts still have the old variation name. Press Save to try again (it also retries when the app opens).'
+        : "Exercise updated successfully!", historyError ? 'error' : 'success');
       renderExerciseSelector();
       // Apply the new fields to this exercise if it's already in the builder
       exerciseMetadataById[exerciseId] = {
@@ -3510,6 +3861,7 @@ async function bootstrapPrivateApp() {
     await loadExercises();
     loadWorkouts();
     loadCategories();
+    retryPendingVariationRenames();
     await loadWorkoutDraft();
     renderSavedWorkouts();
     checkLastWorkoutResult();

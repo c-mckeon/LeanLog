@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-BYFymRgu.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-DFLSM_Ns.css">
 </head>
 <body>
   <!-- One-time consent on first sign-in (GDPR). cognito-session.js shows it; the backend records it
@@ -101,6 +101,17 @@
           <input type="checkbox" id="setsDisplaySetting">
           <span>All sets visible</span>
         </label>
+        <!-- Saved as settings/workoutBuilder/addFirstSet; off = new exercises start with no sets -->
+        <label class="settings-checkbox-row" for="addFirstSetSetting">
+          <input type="checkbox" id="addFirstSetSetting">
+          <span>Add first set by default</span>
+        </label>
+        <!-- Saved as settings/workoutBuilder/adaptiveDisplay; on = on phones each exercise wraps onto
+             a few lines instead of one wide row (style.css, "Adaptive display") -->
+        <label class="settings-checkbox-row" for="adaptiveDisplaySetting">
+          <input type="checkbox" id="adaptiveDisplaySetting" checked>
+          <span>Adaptive display (phones)</span>
+        </label>
         <!-- Saved as settings/workoutBuilder/fitBuilderWidth; off = builder stays full width -->
         <label class="settings-checkbox-row" for="fitBuilderWidthSetting">
           <input type="checkbox" id="fitBuilderWidthSetting" checked>
@@ -114,18 +125,32 @@
         </div>
       </div>
 
-      <!-- Sections with no settings of their own: just the name and checkbox -->
       <div class="settings-section-block">
         <div class="settings-section-header">
-          <span class="settings-section-name">Exercises</span>
+          <button type="button" class="settings-section-collapse" aria-expanded="false" aria-controls="settingsBodyExercises">Exercises</button>
           <input type="checkbox" id="includeAddEditSetting" data-section-setting="addEdit" checked title="Include this section" aria-label="Include Exercises">
+        </div>
+        <div id="settingsBodyExercises" class="settings-section-body" hidden>
+        <!-- Saved as settings/workoutBuilder/showRoutines; off = no Routines mode in the exercise dropdown -->
+        <label class="settings-checkbox-row" for="showRoutinesSetting">
+          <input type="checkbox" id="showRoutinesSetting" checked>
+          <span>Routine templates</span>
+        </label>
+        <!-- Saved as settings/workoutBuilder/showCollections; off = no Collections mode, and collection
+             exercises go back into the regular dropdown lists -->
+        <label class="settings-checkbox-row" for="showCollectionsSetting">
+          <input type="checkbox" id="showCollectionsSetting" checked>
+          <span>Collections</span>
+        </label>
         </div>
       </div>
 
+      <!-- Sections with no settings of their own: just the name and checkbox -->
+
       <div class="settings-section-block">
         <div class="settings-section-header">
-          <span class="settings-section-name">Show Workouts</span>
-          <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked title="Include this section" aria-label="Include Show Workouts">
+          <span class="settings-section-name">Workouts</span>
+          <input type="checkbox" id="includeWorkoutsSetting" data-section-setting="workouts" checked title="Include this section" aria-label="Include Workouts">
         </div>
       </div>
 
@@ -147,10 +172,6 @@
           <option value="horizontal">Horizontal (months side by side)</option>
           <option value="vertical">Vertical (weeks down)</option>
         </select>
-        <label class="settings-checkbox-row" for="writableDaysSetting" style="margin-top: 8px;">
-          <input type="checkbox" id="writableDaysSetting">
-          <span>Writable days</span>
-        </label>
         <!-- Month layout starts from a month; week layout starts from a week -->
         <div id="calendarStartMonthRow" class="settings-half">
           <label class="settings-label" for="calendarStartMonthSetting" style="margin-top: 8px;">Start from month</label>
@@ -163,7 +184,7 @@
         </div>
         <!-- Labels on one line, their boxes on the next. End at "Auto" runs to the week after next;
              saved as settings/calendar/showWholeYear -->
-        <div id="calendarStartWeekRow" class="settings-pair" hidden>
+        <div id="calendarStartWeekRow" class="settings-pair" style="margin-top: 8px;" hidden>
           <label class="settings-label" for="calendarStartWeekSetting">Start from week</label>
           <label class="settings-label" for="calendarEndAtSetting">End at</label>
           <input type="number" id="calendarStartWeekSetting" class="form-control form-control-sm settings-select" min="1" max="53" step="1" value="1">
@@ -172,6 +193,14 @@
             <option value="yearEnd">Year end</option>
           </select>
         </div>
+        <label class="settings-checkbox-row" for="writableDaysSetting" style="margin-top: 8px;">
+          <input type="checkbox" id="writableDaysSetting">
+          <span>Writable days</span>
+        </label>
+        <label class="settings-checkbox-row" for="calendarDayCountSetting" style="margin-top: 8px;">
+          <input type="checkbox" id="calendarDayCountSetting" checked>
+          <span>Show day count</span>
+        </label>
         </div>
       </div>
 
@@ -252,6 +281,8 @@
                 <div class="btn-group exercise-grouping-toggle" role="group" aria-label="Exercise grouping mode">
                   <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn active" data-grouping-mode="frequency" aria-pressed="true">Frequency</button>
                   <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn" data-grouping-mode="category" aria-pressed="false">Grouping</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn" data-grouping-mode="routines" aria-pressed="false">Routines</button>
+                  <button type="button" class="btn btn-sm btn-outline-secondary grouping-mode-btn" data-grouping-mode="collections" aria-pressed="false">Collections</button>
                 </div>
                 <input type="search" id="exercisePickerSearch" class="form-control form-control-sm exercise-picker-search" placeholder="Search exercises" aria-label="Search exercises" autocomplete="off">
               </div>
@@ -331,6 +362,9 @@
           <span id="addEditToolbarButtons" class="exo-toolbar-group hidden">
             <button type="button" id="toggleAddExerciseFormBtn" class="exo-btn">Add Exercise</button>
             <button type="button" id="showexoeditorbtn" class="exo-btn">Exercise Editor</button>
+            <button type="button" id="showRoutinesBtn" class="exo-btn">Routines</button>
+            <button type="button" id="showCollectionsBtn" class="exo-btn">Collections</button>
+            <button type="button" id="showVolumeTableBtn" class="exo-btn">Volume table</button>
           </span>
           <span class="exo-toolbar-spacer"></span>
           <span id="exerciseActionButtons" class="exo-toolbar-group hidden">
@@ -356,9 +390,14 @@
               <input type="search" id="librarySearch" class="form-control form-control-sm" placeholder="Search exercises" aria-label="Search the exercise library" autocomplete="off">
               <div id="libraryList" class="library-list" role="listbox" aria-label="Exercise library"></div>
               <div id="librarySelection" class="library-selection" hidden>
-                <div class="library-selection-title"><strong id="librarySelectedName"></strong> <span id="librarySelectedCategory" class="exo-hint"></span></div>
-                <div id="libraryVariations"></div>
-                <p class="exo-hint library-variation-hint">Variations are optional. Tick any you use, or none; you can add more later in the Exercise Editor.</p>
+                <div class="library-selection-title"><strong id="librarySelectedName"></strong> <span id="librarySelectedCategory" class="exo-hint"></span> <a id="librarySelectedLink" class="exo-demo-link" target="_blank" rel="noopener noreferrer" title="Demonstration on ExRx.net (opens in a new tab)" hidden>Demo ↗</a></div>
+                <!-- Variations start collapsed: most exercises don't need them -->
+                <details class="exo-variations-details">
+                  <summary>Variations <span class="exo-optional">(optional)</span></summary>
+                  <div data-variations-explainer></div>
+                  <div id="libraryVariations"></div>
+                  <p class="exo-hint library-variation-hint">Tick any you want to track separately, or none; you can add more later in the Exercise Editor.</p>
+                </details>
                 <button type="button" id="addLibraryExerciseBtn" class="exo-btn exo-btn-primary">Add exercise</button>
               </div>
             </div>
@@ -390,17 +429,23 @@
                     <button type="button" id="doneRemovingCategoriesBtn" class="exo-btn exo-btn-sm">Done</button>
                   </div>
                 </div>
-                <div class="exo-add-field exo-add-variations">
-                  <span class="exo-add-label">Variations <span class="exo-optional">(optional)</span></span>
+                <details class="exo-add-field exo-add-variations exo-variations-details">
+                  <summary class="exo-add-label">Variations <span class="exo-optional">(optional)</span></summary>
+                  <div data-variations-explainer></div>
                   <div id="customVariationChips"></div>
                   <div class="exo-add-variation-own">
                     <input type="text" id="customVariationInput" placeholder="Add your own, e.g. Smith machine" maxlength="40" autocomplete="off" aria-label="Add your own variation">
                     <button type="button" id="customVariationAddBtn" class="exo-btn exo-btn-sm">Add</button>
                   </div>
-                </div>
+                </details>
                 <div class="exo-add-field exo-add-note">
                   <label for="newExerciseNote">Note <span class="exo-optional">(optional)</span></label>
                   <input type="text" id="newExerciseNote" placeholder="e.g. Seat on notch 4, slow on the way down" maxlength="300" autocomplete="off">
+                </div>
+                <!-- What each set records; filled by renderTrackFieldsPicker (app.js) -->
+                <div class="exo-add-field exo-add-track">
+                  <span class="exo-add-label">Track</span>
+                  <div id="newExerciseTrackFields" class="track-fields"></div>
                 </div>
               </div>
 
@@ -421,7 +466,116 @@
                 </div>
             </form>
           </div>
-        </section> 
+        </section>
+
+        <!-- How variations work: copied into each [data-variations-explainer] in Add Exercise (app.js).
+             Keep in step with the code: grouping is by exercise id/name; progress and records are
+             keyed by exercise + variation; muscle targets fall back to the default (volume.js). -->
+        <template id="variationsExplainerTemplate">
+          <div class="variations-explainer">
+            <p>A variation is a version of the same exercise, like <em>Incline</em> for Bench Press. In a workout, pick it with the layers button next to the exercise.</p>
+            <div class="variations-explainer-cols">
+              <div>
+                <strong>Counted with the main exercise</strong>
+                <ul>
+                  <li>One entry in the exercise dropdown, routines and the calendar filter</li>
+                  <li>Frequency order in the dropdown</li>
+                  <li>Sets, reps, weight and custom fields, and the exercise note</li>
+                  <li>Muscle-group volume, unless the variation has its own target groups</li>
+                </ul>
+              </div>
+              <div>
+                <strong>Kept separate</strong>
+                <ul>
+                  <li>In a workout: add the exercise again to log another variation as its own entry</li>
+                  <li>Progress: estimated 1RM, records and best efforts are per variation</li>
+                  <li>Muscle-group target groups, if you set them for the variation in the Exercise Editor</li>
+                  <li>Saved workouts show the variation next to the exercise name</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Routines: saved lists of exercises, loaded into the workout builder from the exercise dropdown -->
+        <div id="routinesPanel" class="hidden exo-card routines-card">
+          <div class="exo-add-header">
+            <div>
+              <h3>Routines</h3>
+              <p class="exo-hint">Save a list of exercises as a routine. To use it, switch the exercise dropdown to <strong>Routines</strong>, pick it and press Add.</p>
+            </div>
+          </div>
+          <div class="routines-layout">
+            <div class="routines-sidebar">
+              <button type="button" id="newRoutineBtn" class="exo-btn exo-btn-sm">New routine</button>
+              <div id="routineList" class="routine-list" role="list" aria-label="Saved routines"></div>
+            </div>
+            <p id="routineEditorEmpty" class="exo-hint routine-editor-empty">Pick a routine to edit it, or start a new one.</p>
+            <div id="routineEditor" class="routine-editor" hidden>
+              <label for="routineNameInput" class="routine-label">Name</label>
+              <input type="text" id="routineNameInput" class="form-control form-control-sm" maxlength="60" placeholder="e.g. Push day" autocomplete="off">
+              <div id="routineHint" class="field-hint field-hint-error" role="alert" hidden></div>
+              <span class="routine-label">Exercises</span>
+              <ol id="routineExerciseList" class="routine-exercise-list"></ol>
+              <div class="routine-add-row">
+                <select id="routineExerciseSelect" class="form-control form-control-sm" aria-label="Add an exercise to this routine"></select>
+                <button type="button" id="routineFromBuilderBtn" class="exo-btn exo-btn-sm" title="Add the exercises in your current workout">Copy from current workout</button>
+              </div>
+              <div class="routine-actions">
+                <button type="button" id="saveRoutineBtn" class="exo-btn exo-btn-primary">Save routine</button>
+                <button type="button" id="deleteRoutineBtn" class="exo-btn exo-btn-danger">Delete routine</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Collections: groups of exercises kept out of the regular exercise dropdown (routines.js) -->
+        <div id="collectionsPanel" class="hidden exo-card routines-card">
+          <div class="exo-add-header">
+            <div>
+              <h3>Collections</h3>
+              <p class="exo-hint">For exercises you only need now and then, like rehab or stretches. Exercises in a collection stay out of the main exercise list and show under <strong>Collections</strong> in the exercise dropdown instead.</p>
+            </div>
+          </div>
+          <div class="routines-layout">
+            <div class="routines-sidebar">
+              <button type="button" id="newCollectionBtn" class="exo-btn exo-btn-sm">New collection</button>
+              <div id="collectionList" class="routine-list" role="list" aria-label="Collections"></div>
+            </div>
+            <p id="collectionEditorEmpty" class="exo-hint routine-editor-empty">Pick a collection to edit it, or start a new one.</p>
+            <div id="collectionEditor" class="routine-editor" hidden>
+              <label for="collectionNameInput" class="routine-label">Name</label>
+              <input type="text" id="collectionNameInput" class="form-control form-control-sm" maxlength="60" placeholder="e.g. Shin splints" autocomplete="off">
+              <div id="collectionHint" class="field-hint field-hint-error" role="alert" hidden></div>
+              <label for="collectionNewExerciseInput" class="routine-label">Exercises</label>
+              <!-- Main way in: a new exercise that only exists in this collection -->
+              <div class="routine-new-row">
+                <input type="text" id="collectionNewExerciseInput" class="form-control form-control-sm" maxlength="60" placeholder="New exercise, e.g. Heel walk" autocomplete="off">
+                <button type="button" id="collectionNewExerciseBtn" class="exo-btn exo-btn-sm exo-btn-primary">Add</button>
+              </div>
+              <div id="collectionNewExerciseTrackFields" class="track-fields track-fields-compact" aria-label="What the new exercise tracks"></div>
+              <ol id="collectionExerciseList" class="routine-exercise-list"></ol>
+              <div class="routine-add-row">
+                <select id="collectionExerciseSelect" class="form-control form-control-sm" aria-label="Move an existing exercise into this collection"></select>
+              </div>
+              <div class="routine-actions">
+                <button type="button" id="saveCollectionBtn" class="exo-btn exo-btn-primary">Save collection</button>
+                <button type="button" id="deleteCollectionBtn" class="exo-btn exo-btn-danger">Delete collection</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Volume table: every exercise's muscle group contributions, editable (renderVolumeMatrix in app.js) -->
+        <div id="volumeTablePanel" class="hidden exo-card volume-matrix-card">
+          <div class="exo-add-header">
+            <div>
+              <h3>Volume table <small class="exo-hint">(muscle group contributions)</small></h3>
+              <p class="exo-hint">How much each exercise counts towards each muscle group: 1 = primary, lower = assisting, blank = none. Changes save as you go. Grey numbers are variations using their exercise's default; typing in one gives that variation its own values. These can also be set for each exercise in the Exercise Editor.</p>
+            </div>
+          </div>
+          <section id="volumeMatrixSection"></section>
+        </div>
     </div>
         <div style="margin-top: 10px;" class="hidden" id="exerciseeditor" >
               <!-- Optionally, add a selector for the type if needed -->
@@ -442,13 +596,41 @@
                       <div class="exo-step-body">
                         <label for="categorySelector">Category</label>
                         <select id="categorySelector" aria-label="Category"></select>
+                        <!-- "Add new category" / "Remove category", the same as in Add Exercise -->
+                        <div id="editorCategoryAddRow" class="category-inline" hidden>
+                          <div class="category-inline-controls">
+                            <input type="text" id="editorNewCategoryInput" placeholder="New category name…" maxlength="40" aria-label="New category name">
+                            <button type="button" id="editorSaveCategoryBtn" class="exo-btn exo-btn-sm exo-btn-primary">Save</button>
+                            <button type="button" id="editorCancelCategoryBtn" class="exo-btn exo-btn-sm">Cancel</button>
+                          </div>
+                          <div id="editorCategoryAddHint" class="field-hint field-hint-error" role="alert" hidden></div>
+                        </div>
+                        <div id="editorCategoryRemoveRow" class="category-inline" hidden>
+                          <span class="category-inline-label">Remove a category:</span>
+                          <div id="editorCategoryChips" class="category-chips"></div>
+                          <div id="editorCategoryRemoveHint" class="field-hint" hidden></div>
+                          <button type="button" id="editorDoneRemovingCategoriesBtn" class="exo-btn exo-btn-sm">Done</button>
+                        </div>
                       </div>
                     </div>
                     <span class="exo-arrow" aria-hidden="true">›</span>
                     <div class="exo-step"><span class="exo-step-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 9v6M5 6v12M19 6v12M22 9v6M5 12h14"/></svg></span>
                       <div class="exo-step-body">
-                        <label for="exerciseSelector">Exercise</label>
-                        <select id="exerciseSelector" aria-label="Exercise"></select>
+                        <label for="editorExercisePickerTrigger">Exercise</label>
+                        <!-- Searchable list with category headings, like the workout builder's dropdown -->
+                        <div class="exercise-picker editor-exercise-picker" id="editorExercisePicker">
+                          <button type="button" id="editorExercisePickerTrigger" class="form-control exercise-picker-trigger" aria-haspopup="true" aria-expanded="false" aria-controls="editorExercisePickerMenu">
+                            <span data-editor-exercise-label>Select exercise</span>
+                            <span aria-hidden="true">▾</span>
+                          </button>
+                          <div id="editorExercisePickerMenu" class="exercise-picker-menu" role="region" aria-label="Exercises to edit" hidden>
+                            <div class="exercise-picker-header">
+                              <input type="search" id="editorExerciseSearch" class="form-control form-control-sm exercise-picker-search" placeholder="Search exercises" aria-label="Search exercises" autocomplete="off">
+                            </div>
+                            <div id="editorExerciseOptions" class="exercise-picker-options"></div>
+                            <div id="editorExerciseEmpty" class="exercise-picker-empty" hidden>No matching exercises</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                     <span class="exo-arrow" aria-hidden="true">›</span>
@@ -488,7 +670,6 @@
                     <button type="button" id="nextExerciseBtn" class="btn btn-sm btn-outline-secondary" aria-label="Next exercise">›</button>
                   </span>
                 </div>
-                <section id="volumeMatrixSection" class="exo-card volume-matrix-card" hidden></section>
               </div></div>
 
           </div>
@@ -555,6 +736,7 @@
   <script src="js/cognito-session.js" defer></script>
   <script src="js/exerciseLibrary.js" defer></script>
   <script src="js/app.js" defer></script>
+  <script src="js/routines.js" defer></script>
   <script src="js/analytics.js" defer></script>
   <script src="js/progress.js" defer></script>
   <script src="js/volume.js" defer></script>
@@ -576,13 +758,16 @@
       <details id="calendarExerciseFilter" class="calendar-exercise-filter" style="display: none;">
         <summary class="period-select" id="calendarExerciseFilterLabel">Exercises: All</summary>
         <div class="calendar-exercise-panel">
+          <input type="search" id="calendarExerciseSearch" class="form-control form-control-sm exercise-picker-search calendar-exercise-search" placeholder="Search exercises" aria-label="Search exercises" autocomplete="off">
           <div class="calendar-exercise-actions">
             <button type="button" class="settings-link-btn" data-calendar-select="all">Select all</button>
             <button type="button" class="settings-link-btn" data-calendar-select="none">Deselect all</button>
           </div>
           <div class="calendar-exercise-list" id="calendarExerciseList"></div>
+          <div id="calendarExerciseEmpty" class="exercise-picker-empty" hidden>No matching exercises</div>
         </div>
       </details>
+      <span id="calendarDayCount" class="calendar-day-count" aria-live="polite"></span>
     </div>
     
     <div id="calendar-container" style="padding-top: 20px; display: none;"></div>
@@ -681,16 +866,20 @@
                 <button type="button" id="recordE1RMBtn" class="btn btn-sm btn-success">Save</button>
               </div>
             </div>
+            <!-- Right-hand group: the display options, then the exercise filter -->
             <div class="e1rm-group e1rm-data">
+              <!-- Divides each one-rep max by bodyweight on that day (from the Weight Metric) -->
+              <label class="e1rm-group e1rm-per-bw" title="Each estimated one-rep max divided by your bodyweight on that day, from the Weight Metric">
+                <input type="checkbox" id="e1rmPerBodyweight"> Per kg bodyweight
+              </label>
+              <label class="e1rm-group e1rm-per-bw" title="Colour each exercise's months from its lowest (red) through yellow to its best (green)">
+                <input type="checkbox" id="e1rmColorScale"> Colour scale
+              </label>
               <select id="ORMexerciseDataFilter" style="width: 180px;" class="form-control form-control-sm" aria-label="Exercise to show">
                 <option value="all">Filter by exercise</option>
               </select>
               <button type="button" id="showDataButton" class="btn btn-sm btn-outline-secondary">Show Entries</button>
             </div>
-            <!-- Divides each one-rep max by bodyweight on that day (from the Weight Metric) -->
-            <label class="e1rm-group e1rm-per-bw" title="Each estimated one-rep max divided by your bodyweight on that day, from the Weight Metric">
-              <input type="checkbox" id="e1rmPerBodyweight"> Per kg bodyweight
-            </label>
           </div>
           <!-- Best efforts options: one number (reps × weight) and/or relative to bodyweight -->
           <div id="bestEffortsControls" class="e1rm-controls">

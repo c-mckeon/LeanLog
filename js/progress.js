@@ -17,8 +17,9 @@ const e1rmPerBodyweightBox = document.getElementById('e1rmPerBodyweight');
 const bestEffortsMultiplyBox = document.getElementById('bestEffortsMultiply');
 const bestEffortsPerBodyweightBox = document.getElementById('bestEffortsPerBodyweight');
 const bestEffortsColorScaleBox = document.getElementById('bestEffortsColorScale');
+const e1rmColorScaleBox = document.getElementById('e1rmColorScale');
 const bodyweightHint = document.getElementById('progressBodyweightHint');
-const progressOptions = { e1rmPerBodyweight: false, bestEffortsMultiply: false, bestEffortsPerBodyweight: false, bestEffortsColorScale: false };
+const progressOptions = { e1rmPerBodyweight: false, e1rmColorScale: false, bestEffortsMultiply: false, bestEffortsPerBodyweight: false, bestEffortsColorScale: false };
 
 // Colour scale for a row's boxes: its lowest value pastel red, through pastel yellow, to its best
 // pastel green. Yellow is reached SCALE_YELLOW_AT of the way up, so only the very lowest are red.
@@ -415,9 +416,13 @@ function renderProgressTable(rows, monthKeys) {
     if (!hasData) return;
 
     const row = document.createElement('tr');
-    // Colour scale (Best efforts per kg bodyweight): each box placed between this row's lowest and best value
-    const rowValues = visibleMonthKeys.map((monthKey) => rowData.monthly[monthKey].bestEffortPerBw).filter((v) => v > 0);
-    const colorScale = currentProgressView === 'bestEfforts' && progressOptions.bestEffortsColorScale && rowValues.length >= SCALE_MIN_VALUES;
+    // Colour scale (per kg bodyweight, in Best efforts or one-rep max): each box placed between this
+    // row's lowest and best value
+    const scaleView = currentProgressView === 'bestEfforts' ? (progressOptions.bestEffortsColorScale ? 'bestEffortPerBw' : null)
+      : currentProgressView === 'e1RM' ? (progressOptions.e1rmColorScale ? 'e1RMPerBw' : null)
+      : null;
+    const rowValues = scaleView ? visibleMonthKeys.map((monthKey) => rowData.monthly[monthKey][scaleView]).filter((v) => v > 0) : [];
+    const colorScale = Boolean(scaleView) && rowValues.length >= SCALE_MIN_VALUES;
     const rowLow = Math.min(...rowValues);
     const rowHigh = Math.max(...rowValues);
     const cellStyle = (value) => {
@@ -431,7 +436,7 @@ function renderProgressTable(rows, monthKeys) {
       let display = '—';
       if (currentProgressView === 'e1RM' && progressOptions.e1rmPerBodyweight) {
         value = metrics.e1RMPerBw;
-        display = value > 0 ? `${value.toFixed(2)}×` : '—';
+        display = value > 0 ? value.toFixed(2) : '—';
       } else if (currentProgressView === 'e1RM') {
         value = metrics.e1RM;
         display = value > 0 ? metrics.e1RM.toFixed(1) : '—';
@@ -822,11 +827,13 @@ progressViewButtons.forEach(button => {
 
 // Display options, saved under settings/progress:
 // - e1rmPerBodyweight: estimated one-rep max ÷ bodyweight
+// - e1rmColorScale: colour each exercise's months red → yellow → green (needs Per kg bodyweight)
 // - bestEffortsMultiply: best set as reps × weight (one number) instead of "reps×weight"
 // - bestEffortsPerBodyweight: best set's reps × weight ÷ bodyweight (needs Multiply)
 // - bestEffortsColorScale: colour each exercise's months red → yellow → green (needs Per kg bodyweight)
 const PROGRESS_OPTIONS = [
   [e1rmPerBodyweightBox, 'e1rmPerBodyweight'],
+  [e1rmColorScaleBox, 'e1rmColorScale'],
   [bestEffortsMultiplyBox, 'bestEffortsMultiply'],
   [bestEffortsPerBodyweightBox, 'bestEffortsPerBodyweight'],
   [bestEffortsColorScaleBox, 'bestEffortsColorScale']
@@ -849,7 +856,9 @@ function loadPerBodyweightSetting() {
 // before it is ticked. Returns the options it turned off, as updates to save.
 const BEST_EFFORTS_CHAIN = [
   [bestEffortsPerBodyweightBox, 'bestEffortsPerBodyweight', 'bestEffortsMultiply'],
-  [bestEffortsColorScaleBox, 'bestEffortsColorScale', 'bestEffortsPerBodyweight']
+  [bestEffortsColorScaleBox, 'bestEffortsColorScale', 'bestEffortsPerBodyweight'],
+  // One-rep max works the same way: its colour scale needs Per kg bodyweight
+  [e1rmColorScaleBox, 'e1rmColorScale', 'e1rmPerBodyweight']
 ];
 
 function syncBestEffortsPerBodyweight() {

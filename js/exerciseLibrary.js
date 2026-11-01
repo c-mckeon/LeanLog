@@ -1,92 +1,93 @@
 // Exercise library offered in "Add Exercise → From library".
 //
-// Each entry: { name, category, variations } where `variations` groups common
-// variations by type (Equipment, Angle, Grip...). The groups only organise the
-// picker; the user's exercise stores the chosen names as a flat list, the same as
-// variations added later in the Exercise Editor. Categories match the app's
+// `link` (optional): a demonstration page on ExRx.net, shown as "Demo ↗". Every link was
+// checked to load; activities without a sensible page have none.
+//
+// What each set records: `fields` from 'sets', 'reps', 'weight' and 'custom'; anything without
+// `fields` tracks sets, reps and weight. 'custom' is a box named by `customLabel` (keep it short:
+// beside reps or weight the box is narrow). An exercise with only 'custom' has a single entry
+// instead of sets, e.g. Floors for the stair climber.
+//
+// Each entry: { name, category, variations } where `variations` lists only real variations: ones
+// different enough to track separately (Incline for Bench Press), not equipment or grip details.
+// They're offered as tick boxes and stored on the user's exercise, the same as variations added
+// later in the Exercise Editor. Categories match the app's
 // standard ones and are recreated for the user if missing.
 //
 // To grow the library, add entries here. Keep variation names short and readable
 // on their own (they show next to the exercise in the workout builder).
-// Variations offered for an exercise made with "Create your own", grouped the same way.
-window.COMMON_VARIATIONS = {
-  Equipment: ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'Kettlebell', 'Bodyweight', 'Band'],
-  Position: ['Incline', 'Decline', 'Seated', 'Standing'],
-  'Grip & stance': ['Wide', 'Close', 'Neutral grip', 'Single arm', 'Single leg'],
-  Tempo: ['Paused', 'Slow lowering']
-};
 
 window.EXERCISE_LIBRARY = [
   // Upper Body Push
-  { name: 'Bench Press', category: 'Upper Body Push', variations: { Equipment: ['Barbell', 'Dumbbell', 'Smith machine', 'Machine'], Angle: ['Incline', 'Decline'], Grip: ['Close grip', 'Wide grip'], Tempo: ['Paused'] } },
-  { name: 'Overhead Press', category: 'Upper Body Push', variations: { Equipment: ['Barbell', 'Dumbbell', 'Machine', 'Kettlebell'], Position: ['Seated', 'Standing'], Style: ['Push press', 'Arnold press'] } },
-  { name: 'Push-Up', category: 'Upper Body Push', variations: { Angle: ['Incline', 'Decline'], 'Hand position': ['Diamond', 'Wide', 'Archer'], Load: ['Weighted', 'Deficit'] } },
-  { name: 'Dip', category: 'Upper Body Push', variations: { Setup: ['Parallel bars', 'Bench', 'Ring', 'Machine'], Load: ['Weighted', 'Assisted'] } },
-  { name: 'Chest Fly', category: 'Upper Body Push', variations: { Equipment: ['Dumbbell', 'Cable', 'Machine (pec deck)'], Angle: ['Incline', 'Decline'] } },
-  { name: 'Lateral Raise', category: 'Upper Body Push', variations: { Equipment: ['Dumbbell', 'Cable', 'Machine'], Position: ['Seated', 'Lean-away'] } },
-  { name: 'Front Raise', category: 'Upper Body Push', variations: { Equipment: ['Dumbbell', 'Cable', 'Plate', 'Barbell'] } },
-  { name: 'Tricep Extension', category: 'Upper Body Push', variations: { Equipment: ['Cable', 'Dumbbell', 'EZ bar'], Position: ['Overhead', 'Lying (skull crusher)'] } },
-  { name: 'Tricep Pushdown', category: 'Upper Body Push', variations: { Attachment: ['Rope', 'Straight bar', 'V-bar'], Grip: ['Reverse grip', 'Single arm'] } },
-  { name: 'Landmine Press', category: 'Upper Body Push', variations: { Position: ['Standing', 'Half-kneeling'], Arms: ['Single arm', 'Two arm'] } },
+  { name: 'Bench Press', category: 'Upper Body Push', variations: ['Incline', 'Decline', 'Close grip'], link: 'https://exrx.net/WeightExercises/PectoralSternal/BBBenchPress' },
+  { name: 'Overhead Press', category: 'Upper Body Push', variations: ['Seated', 'Push press'], link: 'https://exrx.net/WeightExercises/DeltoidAnterior/BBMilitaryPress' },
+  { name: 'Push-Up', category: 'Upper Body Push', variations: ['Incline', 'Decline', 'Diamond'], link: 'https://exrx.net/WeightExercises/PectoralSternal/BWPushup' },
+  { name: 'Dip', category: 'Upper Body Push', variations: ['Bench dip', 'Assisted'], link: 'https://exrx.net/WeightExercises/PectoralSternal/BWChestDip' },
+  { name: 'Chest Fly', category: 'Upper Body Push', variations: ['Incline', 'Cable'], link: 'https://exrx.net/WeightExercises/PectoralSternal/DBFly' },
+  { name: 'Lateral Raise', category: 'Upper Body Push', variations: ['Cable'], link: 'https://exrx.net/WeightExercises/DeltoidLateral/DBLateralRaise' },
+  { name: 'Front Raise', category: 'Upper Body Push', variations: [], link: 'https://exrx.net/WeightExercises/DeltoidAnterior/DBFrontRaise' },
+  { name: 'Tricep Extension', category: 'Upper Body Push', variations: ['Overhead', 'Skull crusher'], link: 'https://exrx.net/WeightExercises/Triceps/DBTriExt' },
+  { name: 'Tricep Pushdown', category: 'Upper Body Push', variations: ['Rope'], link: 'https://exrx.net/WeightExercises/Triceps/CBPushdown' },
+  { name: 'Landmine Press', category: 'Upper Body Push', variations: ['Single arm'] },
 
   // Upper Body Pull
-  { name: 'Pull-Up', category: 'Upper Body Pull', variations: { Grip: ['Wide grip', 'Neutral grip', 'Chin-up'], Load: ['Weighted', 'Assisted', 'Negative'] } },
-  { name: 'Row', category: 'Upper Body Pull', variations: { Equipment: ['Barbell', 'Dumbbell', 'Cable', 'Machine', 'T-bar'], Style: ['Bent-over', 'Seated', 'Chest-supported', 'Pendlay'], Arms: ['Single arm'] } },
-  { name: 'Lat Pulldown', category: 'Upper Body Pull', variations: { Grip: ['Wide grip', 'Close grip', 'Neutral grip', 'Reverse grip'], Arms: ['Single arm'] } },
-  { name: 'Bicep Curl', category: 'Upper Body Pull', variations: { Equipment: ['Dumbbell', 'Barbell', 'EZ bar', 'Cable', 'Machine'], Style: ['Hammer', 'Preacher', 'Incline', 'Concentration', 'Spider'] } },
-  { name: 'Face Pull', category: 'Upper Body Pull', variations: { Attachment: ['Rope', 'Band'], Position: ['Standing', 'Seated', 'Kneeling'] } },
-  { name: 'Rear Delt Fly', category: 'Upper Body Pull', variations: { Equipment: ['Dumbbell', 'Cable', 'Machine (reverse pec deck)'], Position: ['Bent-over', 'Chest-supported'] } },
-  { name: 'Shrug', category: 'Upper Body Pull', variations: { Equipment: ['Barbell', 'Dumbbell', 'Trap bar', 'Machine'] } },
-  { name: 'Inverted Row', category: 'Upper Body Pull', variations: { Setup: ['Bar', 'Rings', 'TRX'], Load: ['Feet elevated', 'Weighted'] } },
-  { name: 'Straight-Arm Pulldown', category: 'Upper Body Pull', variations: { Attachment: ['Straight bar', 'Rope'] } },
-  { name: 'Wrist Curl', category: 'Upper Body Pull', variations: { Direction: ['Reverse'], Equipment: ['Barbell', 'Dumbbell'] } },
+  { name: 'Pull-Up', category: 'Upper Body Pull', variations: ['Chin-up', 'Neutral grip', 'Assisted'], link: 'https://exrx.net/WeightExercises/LatissimusDorsi/BWPullup' },
+  { name: 'Row', category: 'Upper Body Pull', variations: ['Single-arm dumbbell', 'Seated cable', 'Chest-supported'], link: 'https://exrx.net/WeightExercises/BackGeneral/BBBentOverRow' },
+  { name: 'Lat Pulldown', category: 'Upper Body Pull', variations: ['Close grip', 'Underhand'], link: 'https://exrx.net/WeightExercises/LatissimusDorsi/CBFrontPulldown' },
+  { name: 'Bicep Curl', category: 'Upper Body Pull', variations: ['Hammer', 'Preacher', 'Incline'], link: 'https://exrx.net/WeightExercises/Biceps/DBCurl' },
+  { name: 'Face Pull', category: 'Upper Body Pull', variations: [], link: 'https://exrx.net/WeightExercises/DeltoidPosterior/CBStandingRearDeltRowRope' },
+  { name: 'Rear Delt Fly', category: 'Upper Body Pull', variations: [], link: 'https://exrx.net/WeightExercises/DeltoidPosterior/DBRearLateralRaise' },
+  { name: 'Shrug', category: 'Upper Body Pull', variations: [], link: 'https://exrx.net/WeightExercises/TrapeziusUpper/BBShrug' },
+  { name: 'Inverted Row', category: 'Upper Body Pull', variations: ['Feet elevated'], link: 'https://exrx.net/WeightExercises/BackGeneral/BWSupineRow' },
+  { name: 'Straight-Arm Pulldown', category: 'Upper Body Pull', variations: [] },
+  { name: 'Wrist Curl', category: 'Upper Body Pull', variations: ['Reverse'], link: 'https://exrx.net/WeightExercises/WristFlexors/BBWristCurl' },
 
   // Legs
-  { name: 'Squat', category: 'Legs', variations: { 'Bar position': ['High bar', 'Low bar', 'Front squat'], Equipment: ['Goblet', 'Smith machine', 'Safety bar', 'Hack squat'], Tempo: ['Paused', 'Box squat'] } },
-  { name: 'Deadlift', category: 'Legs', variations: { Style: ['Conventional', 'Sumo', 'Romanian', 'Stiff-leg'], Equipment: ['Trap bar', 'Dumbbell', 'Deficit', 'Rack pull'] } },
-  { name: 'Lunge', category: 'Legs', variations: { Direction: ['Forward', 'Reverse', 'Walking', 'Lateral'], Equipment: ['Dumbbell', 'Barbell'] } },
-  { name: 'Split Squat', category: 'Legs', variations: { Style: ['Bulgarian', 'Front-foot elevated'], Equipment: ['Dumbbell', 'Barbell', 'Smith machine'] } },
-  { name: 'Leg Press', category: 'Legs', variations: { 'Foot position': ['High stance', 'Low stance', 'Narrow', 'Wide'], Legs: ['Single leg'] } },
-  { name: 'Leg Extension', category: 'Legs', variations: { Legs: ['Single leg'], Tempo: ['Paused'] } },
-  { name: 'Leg Curl', category: 'Legs', variations: { Position: ['Lying', 'Seated', 'Standing'], Style: ['Nordic'], Legs: ['Single leg'] } },
-  { name: 'Hip Thrust', category: 'Legs', variations: { Equipment: ['Barbell', 'Machine', 'Band'], Style: ['Glute bridge'], Legs: ['Single leg'] } },
-  { name: 'Calf Raise', category: 'Legs', variations: { Position: ['Standing', 'Seated'], Equipment: ['Machine', 'Smith machine', 'Leg press', 'Dumbbell'], Legs: ['Single leg'] } },
-  { name: 'Step-Up', category: 'Legs', variations: { Equipment: ['Dumbbell', 'Barbell'], Direction: ['Lateral'] } },
-  { name: 'Good Morning', category: 'Legs', variations: { Position: ['Standing', 'Seated'] } },
-  { name: 'Hip Abduction', category: 'Legs', variations: { Equipment: ['Machine', 'Cable', 'Band'] } },
-  { name: 'Hip Adduction', category: 'Legs', variations: { Equipment: ['Machine', 'Cable', 'Copenhagen plank'] } },
-  { name: 'Kettlebell Swing', category: 'Legs', variations: { Style: ['Russian', 'American'], Arms: ['Single arm'] } },
+  { name: 'Squat', category: 'Legs', variations: ['Front squat', 'Goblet', 'Hack squat'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/BBSquat' },
+  { name: 'Deadlift', category: 'Legs', variations: ['Romanian', 'Sumo', 'Trap bar'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/BBDeadlift' },
+  { name: 'Lunge', category: 'Legs', variations: ['Reverse', 'Walking', 'Lateral'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/DBLunge' },
+  { name: 'Split Squat', category: 'Legs', variations: ['Bulgarian'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/DBSplitSquat' },
+  { name: 'Leg Press', category: 'Legs', variations: ['Single leg'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/LV45LegPress' },
+  { name: 'Leg Extension', category: 'Legs', variations: [], link: 'https://exrx.net/WeightExercises/Quadriceps/LVLegExtension' },
+  { name: 'Leg Curl', category: 'Legs', variations: ['Seated', 'Nordic'], link: 'https://exrx.net/WeightExercises/Hamstrings/LVLyingLegCurl' },
+  { name: 'Hip Thrust', category: 'Legs', variations: ['Glute bridge', 'Single leg'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/BBHipThrust' },
+  { name: 'Calf Raise', category: 'Legs', variations: ['Seated', 'Single leg'], link: 'https://exrx.net/WeightExercises/Gastrocnemius/BBStandingCalfRaise' },
+  { name: 'Step-Up', category: 'Legs', variations: ['Lateral'], link: 'https://exrx.net/WeightExercises/GluteusMaximus/DBStepUp' },
+  { name: 'Good Morning', category: 'Legs', variations: [], link: 'https://exrx.net/WeightExercises/Hamstrings/BBGoodMorning' },
+  { name: 'Hip Abduction', category: 'Legs', variations: [], link: 'https://exrx.net/WeightExercises/HipAbductor/LVSeatedHipAbduction' },
+  { name: 'Hip Adduction', category: 'Legs', variations: ['Copenhagen plank'], link: 'https://exrx.net/WeightExercises/HipAdductors/LVSeatedHipAdduction' },
+  { name: 'Kettlebell Swing', category: 'Legs', variations: ['Single arm'], link: 'https://exrx.net/WeightExercises/Kettlebell/KBSwing' },
 
   // Core & Functional
-  { name: 'Plank', category: 'Core & Functional', variations: { Style: ['Side plank', 'RKC plank', 'Plank with reach'], Load: ['Weighted'] } },
-  { name: 'Leg Raise', category: 'Core & Functional', variations: { Position: ['Hanging', 'Lying', "Captain's chair"], Style: ['Knee raise', 'Toes to bar'] } },
-  { name: 'Crunch', category: 'Core & Functional', variations: { Equipment: ['Cable', 'Machine', 'Decline bench'], Style: ['Reverse', 'Bicycle'] } },
-  { name: 'Loaded Carry', category: 'Core & Functional', variations: { Style: ["Farmer's carry", 'Suitcase carry', 'Overhead carry', 'Front-rack carry'] } },
-  { name: 'Russian Twist', category: 'Core & Functional', variations: { Load: ['Weighted', 'Medicine ball'] } },
-  { name: 'Ab Wheel Rollout', category: 'Core & Functional', variations: { Position: ['Kneeling', 'Standing'] } },
-  { name: 'Pallof Press', category: 'Core & Functional', variations: { Equipment: ['Cable', 'Band'], Position: ['Standing', 'Half-kneeling'] } },
-  { name: 'Dead Bug', category: 'Core & Functional', variations: { Load: ['Weighted', 'Band'] } },
-  { name: 'Back Extension', category: 'Core & Functional', variations: { Angle: ['45°', '90°'], Style: ['Reverse hyper'], Load: ['Weighted'] } },
-  { name: 'Woodchop', category: 'Core & Functional', variations: { Direction: ['High to low', 'Low to high'], Equipment: ['Cable', 'Band', 'Medicine ball'] } },
-  { name: 'Burpee', category: 'Core & Functional', variations: { Style: ['No push-up', 'Burpee box jump'] } },
-  { name: 'Box Jump', category: 'Core & Functional', variations: { Style: ['Seated', 'Lateral', 'Depth jump'] } },
-  { name: 'Turkish Get-Up', category: 'Core & Functional', variations: { Equipment: ['Kettlebell', 'Dumbbell'] } },
-  { name: 'Sled Push', category: 'Core & Functional', variations: { Style: ['Sled pull', 'Sled drag'] } },
-  { name: 'Battle Ropes', category: 'Core & Functional', variations: { Style: ['Waves', 'Slams', 'Alternating'] } },
+  { name: 'Plank', category: 'Core & Functional', variations: ['Side plank'], fields: ['sets', 'weight', 'custom'], customLabel: 'Secs', link: 'https://exrx.net/WeightExercises/RectusAbdominis/BWFrontPlank' },
+  { name: 'Leg Raise', category: 'Core & Functional', variations: ['Knee raise', 'Lying'], fields: ['sets', 'reps'], link: 'https://exrx.net/WeightExercises/HipFlexors/WtHangLegRaise' },
+  { name: 'Crunch', category: 'Core & Functional', variations: ['Cable', 'Reverse'], link: 'https://exrx.net/WeightExercises/RectusAbdominis/BWCrunch' },
+  { name: 'Loaded Carry', category: 'Core & Functional', variations: ["Farmer's carry", 'Suitcase carry'], fields: ['sets', 'weight', 'custom'], customLabel: 'Metres' },
+  { name: 'Russian Twist', category: 'Core & Functional', variations: [] },
+  { name: 'Ab Wheel Rollout', category: 'Core & Functional', variations: [], fields: ['sets', 'reps'] },
+  { name: 'Pallof Press', category: 'Core & Functional', variations: [] },
+  { name: 'Dead Bug', category: 'Core & Functional', variations: [], fields: ['sets', 'reps'] },
+  { name: 'Back Extension', category: 'Core & Functional', variations: ['Reverse hyper'], link: 'https://exrx.net/WeightExercises/Hamstrings/Wt45Hyperextension' },
+  { name: 'Woodchop', category: 'Core & Functional', variations: ['Low to high'] },
+  { name: 'Burpee', category: 'Core & Functional', variations: [], fields: ['sets', 'reps'] },
+  { name: 'Box Jump', category: 'Core & Functional', variations: ['Depth jump'], fields: ['sets', 'reps'], link: 'https://exrx.net/Plyometrics/BoxJump' },
+  { name: 'Turkish Get-Up', category: 'Core & Functional', variations: [], link: 'https://exrx.net/WeightExercises/Kettlebell/KBTurkishGetUp' },
+  { name: 'Sled Push', category: 'Core & Functional', variations: ['Sled pull'], fields: ['sets', 'weight', 'custom'], customLabel: 'Metres' },
+  { name: 'Battle Ropes', category: 'Core & Functional', variations: ['Slams'], fields: ['sets', 'custom'], customLabel: 'Secs' },
 
   // Activity & Conditioning
-  { name: 'Running', category: 'Activity & Conditioning', variations: { Setting: ['Treadmill', 'Outdoor', 'Track', 'Trail'], Type: ['Easy', 'Tempo', 'Intervals', 'Sprints'] } },
-  { name: 'Cycling', category: 'Activity & Conditioning', variations: { Setting: ['Indoor', 'Outdoor', 'Spin class'], Type: ['Easy', 'Intervals'] } },
-  { name: 'Swimming', category: 'Activity & Conditioning', variations: { Stroke: ['Freestyle', 'Breaststroke', 'Backstroke', 'Butterfly'] } },
-  { name: 'Rowing', category: 'Activity & Conditioning', variations: { Type: ['Easy', 'Intervals'], Setting: ['Machine', 'On water'] } },
-  { name: 'Walking', category: 'Activity & Conditioning', variations: { Setting: ['Treadmill', 'Outdoor', 'Incline'], Load: ['Rucking'] } },
-  { name: 'Hiking', category: 'Activity & Conditioning', variations: {} },
-  { name: 'Elliptical', category: 'Activity & Conditioning', variations: {} },
-  { name: 'Stair Climber', category: 'Activity & Conditioning', variations: {} },
-  { name: 'Jump Rope', category: 'Activity & Conditioning', variations: { Style: ['Double unders', 'Single leg'] } },
-  { name: 'Ski Erg', category: 'Activity & Conditioning', variations: {} },
-  { name: 'Assault Bike', category: 'Activity & Conditioning', variations: {} },
-  { name: 'Yoga', category: 'Activity & Conditioning', variations: { Style: ['Vinyasa', 'Hatha', 'Yin', 'Power'] } },
-  { name: 'Mobility', category: 'Activity & Conditioning', variations: { Focus: ['Hips', 'Shoulders', 'Spine', 'Full body'] } },
-  { name: 'Sports', category: 'Activity & Conditioning', variations: { Sport: ['Football', 'Basketball', 'Tennis', 'Padel', 'Climbing', 'Martial arts'] } }
+  { name: 'Running', category: 'Activity & Conditioning', variations: ['Treadmill', 'Trail'], fields: ['custom'], customLabel: 'Distance (km)' },
+  { name: 'Cycling', category: 'Activity & Conditioning', variations: ['Indoor'], fields: ['custom'], customLabel: 'Distance (km)' },
+  { name: 'Swimming', category: 'Activity & Conditioning', variations: ['Freestyle', 'Breaststroke'], fields: ['custom'], customLabel: 'Laps' },
+  { name: 'Rowing', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Distance (m)' },
+  { name: 'Walking', category: 'Activity & Conditioning', variations: ['Treadmill', 'Rucking'], fields: ['custom'], customLabel: 'Distance (km)' },
+  { name: 'Hiking', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Distance (km)' },
+  { name: 'Elliptical', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Minutes' },
+  { name: 'Stair Climber', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Floors' },
+  { name: 'Jump Rope', category: 'Activity & Conditioning', variations: ['Double unders'], fields: ['sets', 'reps'] },
+  { name: 'Ski Erg', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Distance (m)' },
+  { name: 'Assault Bike', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Calories' },
+  { name: 'Yoga', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Minutes' },
+  { name: 'Mobility', category: 'Activity & Conditioning', variations: [], fields: ['custom'], customLabel: 'Minutes' },
+  { name: 'Sports', category: 'Activity & Conditioning', variations: ['Football', 'Tennis', 'Padel', 'Basketball'], fields: ['custom'], customLabel: 'Minutes' }
 ];

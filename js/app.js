@@ -223,10 +223,37 @@ let setsDisplayMode = 'cycle';
 let fitBuilderWidth = true;
 // true = adding an exercise starts the clock; false = only the "Start clock" button does
 let autoStartClock = true;
+// true = exercises added to the builder start with one empty set; false = with none (Add set adds the first)
+let addFirstSetByDefault = false;
+const addFirstSetCheckbox = document.getElementById('addFirstSetSetting');
+// true = on narrow screens the builder's rows wrap onto a few lines (CSS under .builder-adaptive)
+let adaptiveBuilderDisplay = true;
+const adaptiveDisplayCheckbox = document.getElementById('adaptiveDisplaySetting');
+
+// Same width as the phone layout in style.css ("Adaptive display")
+const phoneLayoutQuery = window.matchMedia('(max-width: 760px)');
+
+function applyAdaptiveBuilderDisplay() {
+  document.getElementById('workoutBuilderSection')?.classList.toggle('builder-adaptive', adaptiveBuilderDisplay);
+  if (adaptiveDisplayCheckbox) adaptiveDisplayCheckbox.checked = adaptiveBuilderDisplay;
+  updateResultPlaceholder();
+}
+
+// "How you felt" box: the full prompt is too long for a phone, so phones get a short one
+function updateResultPlaceholder() {
+  const input = document.getElementById('lastworkoutresult');
+  if (!input?.dataset.longPlaceholder) return;
+  const phone = adaptiveBuilderDisplay && phoneLayoutQuery.matches;
+  input.placeholder = phone ? input.dataset.shortPlaceholder : input.dataset.longPlaceholder;
+}
+phoneLayoutQuery.addEventListener?.('change', updateResultPlaceholder);
+applyAdaptiveBuilderDisplay();
 
 function applyBuilderWidthMode() {
   document.getElementById('workoutBuilderSection')?.classList.toggle('builder-full-width', !fitBuilderWidth);
   if (fitBuilderWidthCheckbox) fitBuilderWidthCheckbox.checked = fitBuilderWidth;
+  // Fit mode adds a hidden sizing row to the builder (see getWidthProbeExercise); redraw to add or drop it
+  if (exerciseList?.childElementCount) renderExerciseList();
 }
 
 const exercisePickerSearch = document.getElementById('exercisePickerSearch');
@@ -235,6 +262,7 @@ const exercisePickerEmpty = document.getElementById('exercisePickerEmpty');
 function setExercisePickerOpen(isOpen) {
   if (!exercisePickerMenu || !exercisePickerTrigger) return;
   exercisePickerMenu.hidden = !isOpen;
+  if (!isOpen) exercisePickerMenu.style.minWidth = '';
   exercisePickerTrigger.setAttribute('aria-expanded', String(isOpen));
   if (exercisePickerSearch) {
     exercisePickerSearch.value = '';
@@ -294,35 +322,127 @@ if (exercisePickerTrigger) {
   });
 }
 
+// A routine picked in the dropdown (null when an exercise is picked instead). Add loads it.
+let selectedPickerRoutineId = null;
+
+function clearPickerRoutineSelection() {
+  if (!selectedPickerRoutineId) return;
+  selectedPickerRoutineId = null;
+  exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = 'Select Exercise';
+}
+
+// A raised heading in the dropdown (a category, or a collection's name)
+function appendPickerHeading(text) {
+  const heading = document.createElement('div');
+  heading.className = 'exercise-picker-category';
+  heading.textContent = text;
+  exercisePickerOptions.appendChild(heading);
+}
+
+// "No routines yet. Create one…" style link to the panel where they're made
+function appendPickerCreateLink(text, openPanel) {
+  const create = document.createElement('button');
+  create.type = 'button';
+  create.className = 'exercise-picker-routine-create';
+  create.textContent = text;
+  create.addEventListener('click', () => {
+    setExercisePickerOpen(false);
+    openPanel();
+  });
+  exercisePickerOptions.appendChild(create);
+}
+
+// One exercise in the dropdown; picking it selects that option of the hidden select
+function appendPickerExerciseOption(option) {
+  const choice = document.createElement('button');
+  choice.type = 'button';
+  choice.className = 'exercise-picker-option';
+  choice.textContent = option.textContent;
+  choice.addEventListener('click', () => {
+    selectedPickerRoutineId = null;
+    exerciseSelect.value = option.value;
+    exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = option.textContent;
+    setExercisePickerOpen(false);
+    exercisePickerTrigger.focus();
+  });
+  exercisePickerOptions.appendChild(choice);
+}
+
+// Collections mode: a heading per collection with its exercises under it
+function renderPickerCollectionOptions() {
+  const collections = typeof getCollectionPickerEntries === 'function' ? getCollectionPickerEntries() : [];
+  if (!collections.length) {
+    appendPickerCreateLink('No collections yet. Create one…', openCollectionsPanel);
+    return;
+  }
+  collections.forEach((collection) => {
+    const options = collection.exerciseIds.map(findExerciseOption).filter(Boolean);
+    if (!options.length) return;
+    appendPickerHeading(collection.name);
+    options.forEach(appendPickerExerciseOption);
+  });
+}
+
+// Routines mode: one option per saved routine, or a link to create one when there are none
+function renderPickerRoutineOptions(routines) {
+  if (!routines.length) {
+    appendPickerCreateLink('No routines yet. Create one…', openRoutinesPanel);
+    return;
+  }
+  routines.forEach((routine) => {
+    const choice = document.createElement('button');
+    choice.type = 'button';
+    choice.className = 'exercise-picker-option exercise-picker-routine';
+    choice.textContent = routine.name;
+    choice.title = `${routine.exerciseCount} exercise${routine.exerciseCount === 1 ? '' : 's'}`;
+    choice.addEventListener('click', () => {
+      selectedPickerRoutineId = routine.id;
+      exerciseSelect.value = '';
+      exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = routine.name;
+      setExercisePickerOpen(false);
+      exercisePickerTrigger.focus();
+    });
+    exercisePickerOptions.appendChild(choice);
+  });
+}
+
 function renderExercisePickerOptions() {
   if (!exercisePickerOptions) return;
 
   exercisePickerOptions.replaceChildren();
+
+  const routinesMode = workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.ROUTINES;
+  const routines = typeof getRoutinePickerEntries === 'function' ? getRoutinePickerEntries() : [];
+  if (selectedPickerRoutineId && !routines.some((routine) => routine.id === selectedPickerRoutineId)) {
+    clearPickerRoutineSelection();
+  }
+  if (exercisePickerSearch) {
+    exercisePickerSearch.placeholder = routinesMode ? 'Search routines' : 'Search exercises';
+    exercisePickerSearch.setAttribute('aria-label', exercisePickerSearch.placeholder);
+  }
+  if (exercisePickerEmpty) exercisePickerEmpty.textContent = routinesMode ? 'No matching routines' : 'No matching exercises';
+
+  if (routinesMode) {
+    renderPickerRoutineOptions(routines);
+    filterExercisePickerOptions();
+    return;
+  }
+  if (workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.COLLECTIONS) {
+    renderPickerCollectionOptions();
+    filterExercisePickerOptions();
+    return;
+  }
+
+  // Exercises in a collection only show in Collections mode (while that mode is switched on)
+  const inCollections = showCollectionsInDropdown && typeof getCollectionExerciseIds === 'function'
+    ? getCollectionExerciseIds()
+    : new Set();
   Array.from(exerciseSelect.children).forEach((entry) => {
     const options = entry.tagName === 'OPTGROUP' ? Array.from(entry.children) : [entry];
-    const validOptions = options.filter((option) => option.value);
+    const validOptions = options.filter((option) => option.value && !inCollections.has(option.value));
     if (!validOptions.length) return;
-
-    if (entry.tagName === 'OPTGROUP') {
-      const heading = document.createElement('div');
-      heading.className = 'exercise-picker-category';
-      heading.textContent = entry.label;
-      exercisePickerOptions.appendChild(heading);
-    }
-
-    validOptions.forEach((option) => {
-      const choice = document.createElement('button');
-      choice.type = 'button';
-      choice.className = 'exercise-picker-option';
-      choice.textContent = option.textContent;
-      choice.addEventListener('click', () => {
-        exerciseSelect.value = option.value;
-        exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = option.textContent;
-        setExercisePickerOpen(false);
-        exercisePickerTrigger.focus();
-      });
-      exercisePickerOptions.appendChild(choice);
-    });
+    if (entry.tagName === 'OPTGROUP') appendPickerHeading(entry.label);
+    validOptions.forEach(appendPickerExerciseOption);
   });
   filterExercisePickerOptions();
 }
@@ -475,6 +595,46 @@ if (autoStartClockCheckbox) {
   });
 }
 
+adaptiveDisplayCheckbox?.addEventListener('change', async () => {
+  adaptiveBuilderDisplay = adaptiveDisplayCheckbox.checked;
+  applyAdaptiveBuilderDisplay();
+  alignExerciseColumns();
+  try {
+    await database.ref('settings/workoutBuilder').update({ adaptiveDisplay: adaptiveBuilderDisplay });
+  } catch (error) {
+    console.error('Error saving adaptiveDisplay setting:', error);
+  }
+});
+
+if (addFirstSetCheckbox) {
+  addFirstSetCheckbox.addEventListener('change', async () => {
+    const previousValue = addFirstSetByDefault;
+    addFirstSetByDefault = addFirstSetCheckbox.checked;
+    // Turning it on also gives a first set to exercises already in the builder that have none
+    if (addFirstSetByDefault) {
+      const emptyExercises = selectedExercises.filter((exercise) => {
+        const fields = normalizeFields(exercise.fields);
+        return (fields.includes('sets') || fields.includes('reps')) && !(exercise.setsList || []).length;
+      });
+      if (emptyExercises.length) {
+        emptyExercises.forEach((exercise) => {
+          exercise.setsList = [{ reps: '', weight: '', note: '', custom: '' }];
+          exercise.activeSetIndex = 0;
+        });
+        renderExerciseList();
+        saveWorkoutDraft();
+      }
+    }
+    try {
+      await database.ref('settings/workoutBuilder').update({ addFirstSet: addFirstSetByDefault });
+    } catch (error) {
+      addFirstSetByDefault = previousValue;
+      addFirstSetCheckbox.checked = previousValue;
+      console.error('Error saving addFirstSet setting:', error);
+    }
+  });
+}
+
 if (fitBuilderWidthCheckbox) {
   fitBuilderWidthCheckbox.addEventListener('change', async () => {
     const previousValue = fitBuilderWidth;
@@ -516,9 +676,12 @@ if (showPostWorkoutNotesCheckbox) {
   });
 }
 
+// Exercise dropdown modes; "routines" lists saved routines instead of exercises
 const EXERCISE_GROUPING_MODE = {
   FREQUENCY: 'frequency',
-  CATEGORY: 'category'
+  CATEGORY: 'category',
+  ROUTINES: 'routines',
+  COLLECTIONS: 'collections'
 };
 const DEFAULT_EXERCISE_CATEGORIES = ['Legs', 'Core', 'Upper-Body Pull'];
 let workoutBuilderGroupingMode = EXERCISE_GROUPING_MODE.FREQUENCY;
@@ -690,33 +853,10 @@ function getExerciseCategoriesRef() {
 function renderExerciseCategoryOptions() {
   if (!exerciseCategory) return;
 
-  exerciseCategory.innerHTML = '';
-
-  exerciseCategories.forEach((categoryName) => {
-    const option = document.createElement('option');
-    option.value = categoryName;
-    option.textContent = categoryName;
-    exerciseCategory.appendChild(option);
-  });
-
-  const manageSeparator = document.createElement('option');
-  manageSeparator.disabled = true;
-  manageSeparator.textContent = '──────────';
-  exerciseCategory.appendChild(manageSeparator);
-
-  const addOption = document.createElement('option');
-  addOption.value = 'addNewCategory';
-  addOption.textContent = 'Add new category';
-  exerciseCategory.appendChild(addOption);
-
-  const removeOption = document.createElement('option');
-  removeOption.value = 'removeCategory';
-  removeOption.textContent = 'Remove category';
-  exerciseCategory.appendChild(removeOption);
-
-  if (!exerciseCategories.includes(exerciseCategory.value)) {
-    exerciseCategory.value = exerciseCategories[0] || 'addNewCategory';
-  }
+  const previous = exerciseCategory.value;
+  exerciseCategory.replaceChildren(...exerciseCategories.map((categoryName) => new Option(categoryName, categoryName)));
+  appendCategoryManageOptions(exerciseCategory);
+  exerciseCategory.value = exerciseCategories.includes(previous) ? previous : (exerciseCategories[0] || ADD_CATEGORY_VALUE);
 }
 
 async function loadExerciseCategories() {
@@ -745,104 +885,128 @@ async function saveExerciseCategories() {
   }
 }
 
-// Category add / remove happen inline under the "Choose Category" dropdown.
-// Add: the dropdown is swapped for a name box. Remove: a chip per category, each with ×.
-const categoryAddRow = document.getElementById('categoryAddRow');
-const newCategoryInput = document.getElementById('newCategoryInput');
-const categoryAddHint = document.getElementById('categoryAddHint');
-const categoryRemoveRow = document.getElementById('categoryRemoveRow');
-const categoryChips = document.getElementById('categoryChips');
-const categoryRemoveHint = document.getElementById('categoryRemoveHint');
-let lastChosenCategory = '';
+// Category add / remove happen inline under a category dropdown, in Add Exercise and in the
+// Exercise Editor (both edit the one shared category list). The dropdown ends with "Add new
+// category" and "Remove category". Add: the dropdown is swapped for a name box. Remove: a chip
+// per category, each with ×; a category that still has exercises can't be removed, since its
+// exercises would drop out of the workout builder's dropdown.
+const ADD_CATEGORY_VALUE = 'addNewCategory';
+const REMOVE_CATEGORY_VALUE = 'removeCategory';
+const categoryManagers = [];
 
 function setCategoryHint(hint, message) {
   hint.textContent = message;
   hint.hidden = !message;
 }
 
-function closeCategoryEditors(selectValue = lastChosenCategory) {
-  categoryAddRow.hidden = true;
-  categoryRemoveRow.hidden = true;
-  exerciseCategory.hidden = false;
-  renderExerciseCategoryOptions();
-  if (exerciseCategories.includes(selectValue)) exerciseCategory.value = selectValue;
-  lastChosenCategory = exerciseCategory.value;
-  if (typeof renderNewExerciseModel === 'function') renderNewExerciseModel();
+function countExercisesInCategory(category) {
+  const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {};
+  return Object.values(bucket).filter((exercise) => typeof exercise?.name === 'string' && exercise.name.trim()).length;
 }
 
-function openAddCategory() {
-  exerciseCategory.hidden = true;
-  categoryAddRow.hidden = false;
-  newCategoryInput.value = '';
-  newCategoryInput.classList.remove('input-invalid');
-  setCategoryHint(categoryAddHint, '');
-  newCategoryInput.focus();
+// The separator and the two manage options at the end of a category dropdown
+function appendCategoryManageOptions(select) {
+  const separator = new Option('──────────', '');
+  separator.disabled = true;
+  select.append(separator, new Option('Add new category', ADD_CATEGORY_VALUE), new Option('Remove category', REMOVE_CATEGORY_VALUE));
 }
 
-async function saveNewCategory() {
-  const cleaned = newCategoryInput.value.trim();
-  if (!cleaned) {
-    newCategoryInput.focus();
-    return;
-  }
-  const existing = exerciseCategories.find((category) => category.toLowerCase() === cleaned.toLowerCase());
-  if (existing) {
-    newCategoryInput.classList.add('input-invalid');
-    setCategoryHint(categoryAddHint, `"${existing}" already exists`);
-    newCategoryInput.focus();
-    return;
-  }
-
-  exerciseCategories.push(cleaned);
-  exerciseCategories.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
-  await saveExerciseCategories();
-  closeCategoryEditors(cleaned);
+// Redraw every category dropdown after the list changes, keeping what each had chosen
+function refreshCategoryDropdowns() {
+  categoryManagers.forEach((manager) => manager.renderOptions());
 }
 
-function renderCategoryChips() {
-  const onlyOne = exerciseCategories.length <= 1;
-  categoryChips.innerHTML = exerciseCategories.map((category) => `
-    <span class="category-chip" data-category="${escapeExerciseHtml(category)}">
-      ${escapeExerciseHtml(category)}
-      <button type="button" class="category-chip-remove" aria-label="Remove ${escapeExerciseHtml(category)}" ${onlyOne ? 'hidden' : ''}>×</button>
-    </span>`).join('');
-  setCategoryHint(categoryRemoveHint, onlyOne ? 'You need at least one category, so the last one can\'t be removed.' : '');
-}
+function setupCategoryManager({ select, addRow, input, addHint, removeRow, chips, removeHint, saveBtn, cancelBtn, doneBtn, renderOptions, onChosen = () => {} }) {
+  if (!select || !addRow || !removeRow) return;
+  let lastChosen = select.value;
 
-function openRemoveCategories() {
-  exerciseCategory.hidden = true;
-  categoryRemoveRow.hidden = false;
-  renderCategoryChips();
-}
+  const close = (selectValue = lastChosen) => {
+    addRow.hidden = true;
+    removeRow.hidden = true;
+    select.hidden = false;
+    refreshCategoryDropdowns();
+    if ([...select.options].some((option) => option.value === selectValue)) select.value = selectValue;
+    if (select.value === ADD_CATEGORY_VALUE || select.value === REMOVE_CATEGORY_VALUE) select.value = lastChosen;
+    lastChosen = select.value;
+    onChosen(select.value);
+  };
 
-if (exerciseCategory && categoryAddRow && categoryRemoveRow) {
-  lastChosenCategory = exerciseCategory.value;
-  exerciseCategory.addEventListener('change', () => {
-    if (exerciseCategory.value === 'addNewCategory') openAddCategory();
-    else if (exerciseCategory.value === 'removeCategory') openRemoveCategories();
-    else lastChosenCategory = exerciseCategory.value;
+  const openAdd = () => {
+    select.hidden = true;
+    addRow.hidden = false;
+    input.value = '';
+    input.classList.remove('input-invalid');
+    setCategoryHint(addHint, '');
+    input.focus();
+  };
+
+  const saveNew = async () => {
+    const cleaned = input.value.trim();
+    if (!cleaned) return input.focus();
+    const existing = exerciseCategories.find((category) => category.toLowerCase() === cleaned.toLowerCase());
+    if (existing) {
+      input.classList.add('input-invalid');
+      setCategoryHint(addHint, `"${existing}" already exists`);
+      return input.focus();
+    }
+    exerciseCategories.push(cleaned);
+    exerciseCategories.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    await saveExerciseCategories();
+    close(cleaned);
+  };
+
+  const renderChips = () => {
+    const onlyOne = exerciseCategories.length <= 1;
+    chips.innerHTML = exerciseCategories.map((category) => {
+      const count = countExercisesInCategory(category);
+      const removable = !onlyOne && count === 0;
+      return `<span class="category-chip" data-category="${escapeExerciseHtml(category)}"${count ? ` title="Has ${count} exercise${count === 1 ? '' : 's'}; delete them first to remove this category"` : ''}>
+        ${escapeExerciseHtml(category)}${count ? ` <span class="category-chip-count">${count}</span>` : ''}
+        <button type="button" class="category-chip-remove" aria-label="Remove ${escapeExerciseHtml(category)}" ${removable ? '' : 'hidden'}>×</button>
+      </span>`;
+    }).join('');
+    setCategoryHint(removeHint, onlyOne
+      ? 'You need at least one category, so the last one can\'t be removed.'
+      : 'Categories with exercises (the number shows how many) can\'t be removed.');
+  };
+
+  const openRemove = () => {
+    select.hidden = true;
+    removeRow.hidden = false;
+    renderChips();
+  };
+
+  select.addEventListener('change', (event) => {
+    if (select.value === ADD_CATEGORY_VALUE || select.value === REMOVE_CATEGORY_VALUE) {
+      // Keep other listeners from treating these as a category
+      event.stopImmediatePropagation();
+      if (select.value === ADD_CATEGORY_VALUE) openAdd();
+      else openRemove();
+      return;
+    }
+    lastChosen = select.value;
   });
 
-  document.getElementById('saveCategoryBtn').addEventListener('click', saveNewCategory);
-  document.getElementById('cancelCategoryBtn').addEventListener('click', () => closeCategoryEditors());
-  newCategoryInput.addEventListener('input', () => {
-    newCategoryInput.classList.remove('input-invalid');
-    setCategoryHint(categoryAddHint, '');
+  saveBtn.addEventListener('click', saveNew);
+  cancelBtn.addEventListener('click', () => close());
+  input.addEventListener('input', () => {
+    input.classList.remove('input-invalid');
+    setCategoryHint(addHint, '');
   });
-  newCategoryInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') { event.preventDefault(); saveNewCategory(); }
-    if (event.key === 'Escape') closeCategoryEditors();
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') { event.preventDefault(); saveNew(); }
+    if (event.key === 'Escape') close();
   });
 
   // × asks "Remove? Yes / No" inside the chip; Yes removes it straight away.
-  categoryChips.addEventListener('click', async (event) => {
+  chips.addEventListener('click', async (event) => {
     const chip = event.target.closest('.category-chip');
     if (!chip) return;
     const category = chip.dataset.category;
 
     if (event.target.closest('.category-chip-remove')) {
-      renderCategoryChips(); // closes any other chip that was asking
-      const fresh = categoryChips.querySelector(`.category-chip[data-category="${CSS.escape(category)}"]`);
+      renderChips(); // closes any other chip that was asking
+      const fresh = chips.querySelector(`.category-chip[data-category="${CSS.escape(category)}"]`);
       fresh.classList.add('is-confirming');
       fresh.innerHTML = `${escapeExerciseHtml(category)} → Remove?
         <span class="category-chip-confirm">
@@ -851,16 +1015,34 @@ if (exerciseCategory && categoryAddRow && categoryRemoveRow) {
         </span>`;
       fresh.querySelector('.category-chip-yes').focus();
     } else if (event.target.closest('.category-chip-no')) {
-      renderCategoryChips();
+      renderChips();
     } else if (event.target.closest('.category-chip-yes')) {
       exerciseCategories = exerciseCategories.filter((name) => name !== category);
       await saveExerciseCategories();
-      renderExerciseCategoryOptions();
-      renderCategoryChips();
+      refreshCategoryDropdowns();
+      renderChips();
     }
   });
-  document.getElementById('doneRemovingCategoriesBtn').addEventListener('click', () => closeCategoryEditors());
+  doneBtn.addEventListener('click', () => close());
+
+  categoryManagers.push({ renderOptions });
 }
+
+// Add Exercise → Create your own
+setupCategoryManager({
+  select: exerciseCategory,
+  addRow: document.getElementById('categoryAddRow'),
+  input: document.getElementById('newCategoryInput'),
+  addHint: document.getElementById('categoryAddHint'),
+  removeRow: document.getElementById('categoryRemoveRow'),
+  chips: document.getElementById('categoryChips'),
+  removeHint: document.getElementById('categoryRemoveHint'),
+  saveBtn: document.getElementById('saveCategoryBtn'),
+  cancelBtn: document.getElementById('cancelCategoryBtn'),
+  doneBtn: document.getElementById('doneRemovingCategoriesBtn'),
+  renderOptions: () => renderExerciseCategoryOptions(),
+  onChosen: () => { if (typeof renderNewExerciseModel === 'function') renderNewExerciseModel(); }
+});
 
 function setupWorkoutYearSelector() {
   const yearSelect = document.getElementById('workout-year-filter');
@@ -921,7 +1103,7 @@ function setNewExerciseProblem(message) {
 
 newExerciseName.addEventListener('input', () => setNewExerciseProblem(''));
 
-// Variations for "Create your own": tick common ones (window.COMMON_VARIATIONS) or add your own
+// Variations for "Create your own": typed in by the user; each shows as a ticked chip that can be unticked
 const customVariationChips = document.getElementById('customVariationChips');
 const customVariationInput = document.getElementById('customVariationInput');
 let ownVariations = [];
@@ -932,20 +1114,16 @@ function getCheckedCustomVariations() {
 
 function renderCustomVariationChips() {
   const checked = new Set(getCheckedCustomVariations());
-  const groups = Object.entries(window.COMMON_VARIATIONS || {});
-  if (ownVariations.length) groups.push(['Your own', ownVariations]);
-  customVariationChips.innerHTML = groups.map(([group, values]) => `
-    <div class="library-variation-group">
-      <span class="library-variation-type">${escapeExerciseHtml(group)}</span>
-      ${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}" ${checked.has(value) ? 'checked' : ''}> ${escapeExerciseHtml(value)}</label>`).join('')}
-    </div>`).join('');
+  customVariationChips.innerHTML = ownVariations.length
+    ? `<div class="library-variation-group">${ownVariations.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}" ${checked.has(value) ? 'checked' : ''}> ${escapeExerciseHtml(value)}</label>`).join('')}</div>`
+    : '';
 }
 
 // Adds the typed variation as a ticked chip (or ticks the existing one with that name)
 function addOwnVariation() {
   const value = customVariationInput.value.trim();
   if (!value) return customVariationInput.focus();
-  const known = [...Object.values(window.COMMON_VARIATIONS || {}).flat(), ...ownVariations];
+  const known = ownVariations;
   const name = known.find((variation) => variation.toLowerCase() === value.toLowerCase()) || value;
   if (!known.includes(name)) ownVariations.push(name);
   renderCustomVariationChips();
@@ -1047,8 +1225,9 @@ document.getElementById('addExerciseForm').addEventListener('submit', async (eve
       variations,
       volumeMappings: getNewExerciseVolumeMappings(),
       focusAreas: [],
-      fields: ['sets', 'reps', 'weight']
+      ...readTrackFields(newExerciseTrackFields)
     });
+    resetTrackFields(newExerciseTrackFields);
     newExerciseName.value = '';
     newExerciseNote.value = '';
     customVariationInput.value = '';
@@ -1109,11 +1288,12 @@ function renderLibraryList() {
   if (!libraryList) return;
   const library = window.EXERCISE_LIBRARY || [];
   const query = (librarySearch?.value || '').trim().toLowerCase();
-  const existing = getExistingExerciseNames();
+  // "Added" also covers small spelling differences ("Pull-ups" for Pull-Up)
+  const existing = new Set([...getExistingExerciseNames()].map(looseExerciseKey));
   // A search also matches variation names, e.g. "hammer" finds Bicep Curl
   const matches = library.filter((entry) => !query
     || entry.name.toLowerCase().includes(query)
-    || Object.values(entry.variations || {}).flat().some((variation) => variation.toLowerCase().includes(query)));
+    || getLibraryVariations(entry).some((variation) => variation.toLowerCase().includes(query)));
 
   if (!matches.length) {
     libraryList.innerHTML = '<p class="exo-hint library-empty">No matches. Try "Create your own" instead.</p>';
@@ -1130,7 +1310,7 @@ function renderLibraryList() {
     <div class="library-group">
       <div class="library-group-title">${escapeExerciseHtml(category)}</div>
       ${entries.map((entry) => {
-        const added = existing.has(entry.name.toLowerCase());
+        const added = existing.has(looseExerciseKey(entry.name));
         const selected = selectedLibraryExercise?.name === entry.name;
         return `<button type="button" class="library-item${selected ? ' selected' : ''}" role="option" aria-selected="${selected}"
           data-library-name="${escapeExerciseHtml(entry.name)}" ${added ? 'disabled' : ''}>
@@ -1140,6 +1320,65 @@ function renderLibraryList() {
     </div>`).join('');
 }
 
+// The "how variations work" explainer, shared by both Add Exercise modes (template in index.html)
+document.querySelectorAll('[data-variations-explainer]').forEach((slot) => {
+  const template = document.getElementById('variationsExplainerTemplate');
+  if (template) slot.replaceChildren(template.content.cloneNode(true));
+});
+
+// "Track" for new exercises (Create your own, and new exercises in a collection): a tick box per
+// field, sets + reps + weight ticked to start; ticking Custom shows a box to name it ("Floors")
+const TRACK_FIELD_LABELS = { sets: 'Sets', reps: 'Reps', weight: 'Weight', custom: 'Custom' };
+const DEFAULT_TRACK_FIELDS = ['sets', 'reps', 'weight'];
+
+function renderTrackFieldsPicker(container) {
+  if (!container) return;
+  container.innerHTML = `${Object.entries(TRACK_FIELD_LABELS).map(([value, label]) =>
+    `<label class="track-field"><input type="checkbox" value="${value}"${DEFAULT_TRACK_FIELDS.includes(value) ? ' checked' : ''}> ${label}</label>`).join('')}
+    <input type="text" class="form-control form-control-sm track-custom-label" maxlength="40" placeholder="Custom name, e.g. Floors" aria-label="Name of the custom field" hidden>`;
+  container.addEventListener('change', (event) => {
+    if (event.target.value === 'custom') {
+      const label = container.querySelector('.track-custom-label');
+      label.hidden = !event.target.checked;
+      if (event.target.checked) label.focus();
+    }
+  });
+}
+
+// { fields, customLabel } from a picker; fields keep the usual order
+function readTrackFields(container) {
+  if (!container) return { fields: [...DEFAULT_TRACK_FIELDS], customLabel: '' };
+  const fields = [...container.querySelectorAll('input[type="checkbox"]:checked')].map((box) => box.value);
+  const customLabel = fields.includes('custom') ? container.querySelector('.track-custom-label').value.trim() : '';
+  return { fields, customLabel };
+}
+
+function resetTrackFields(container) {
+  if (!container) return;
+  container.querySelectorAll('input[type="checkbox"]').forEach((box) => { box.checked = DEFAULT_TRACK_FIELDS.includes(box.value); });
+  const label = container.querySelector('.track-custom-label');
+  label.value = '';
+  label.hidden = true;
+}
+
+const newExerciseTrackFields = document.getElementById('newExerciseTrackFields');
+renderTrackFieldsPicker(newExerciseTrackFields);
+renderTrackFieldsPicker(document.getElementById('collectionNewExerciseTrackFields'));
+
+// What a library exercise records per set; entries without `fields` track sets, reps and weight
+function getLibraryExerciseFields(entry) {
+  const fields = Array.isArray(entry?.fields) && entry.fields.length ? entry.fields : ['sets', 'reps', 'weight'];
+  return { fields, customLabel: fields.includes('custom') ? (entry.customLabel || '') : '' };
+}
+
+// "Tracks sets, reps and weight", or "Tracks Floors" for a single custom entry
+function describeLibraryExerciseFields(entry) {
+  const { fields, customLabel } = getLibraryExerciseFields(entry);
+  const names = fields.map((field) => (field === 'custom' ? (customLabel || 'Custom') : field));
+  const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+  return `Tracks ${list}`;
+}
+
 function selectLibraryExercise(name) {
   selectedLibraryExercise = (window.EXERCISE_LIBRARY || []).find((entry) => entry.name === name) || null;
   librarySelection.hidden = !selectedLibraryExercise;
@@ -1147,15 +1386,46 @@ function selectLibraryExercise(name) {
   if (!selectedLibraryExercise) return;
 
   document.getElementById('librarySelectedName').textContent = selectedLibraryExercise.name;
-  document.getElementById('librarySelectedCategory').textContent = selectedLibraryExercise.category;
-  const groups = Object.entries(selectedLibraryExercise.variations || {}).filter(([, values]) => values.length);
-  libraryVariations.innerHTML = groups.length
-    ? groups.map(([group, values]) => `
-      <div class="library-variation-group">
-        <span class="library-variation-type">${escapeExerciseHtml(group)}</span>
-        ${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}"> ${escapeExerciseHtml(value)}</label>`).join('')}
-      </div>`).join('')
+  document.getElementById('librarySelectedCategory').textContent = `${selectedLibraryExercise.category} · ${describeLibraryExerciseFields(selectedLibraryExercise)}`;
+  setDemoLink(document.getElementById('librarySelectedLink'), selectedLibraryExercise.link);
+  const values = getLibraryVariations(selectedLibraryExercise);
+  libraryVariations.innerHTML = values.length
+    ? `<div class="library-variation-group">${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}"> ${escapeExerciseHtml(value)}</label>`).join('')}</div>`
     : '<p class="exo-hint">No common variations for this one.</p>';
+}
+
+// A library entry's variations as a flat list (older entries grouped them by type)
+function getLibraryVariations(entry) {
+  const raw = entry?.variations;
+  return Array.isArray(raw) ? raw : Object.values(raw || {}).flat();
+}
+
+// A name reduced for loose matching: case, spaces, hyphens and plurals don't count, so
+// "Pull-ups", "pullups" and "Pull-Up" all match ("Press" keeps its s)
+function looseExerciseKey(name) {
+  return String(name || '').toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (word.length > 4 && /(ch|sh|x)es$/.test(word)) return word.slice(0, -2); // crunches → crunch
+      if (word.length > 2 && word.endsWith('s') && !/(ss|us|is)$/.test(word)) return word.slice(0, -1); // raises → raise, ups → up
+      return word;
+    })
+    .join('');
+}
+
+// The library entry matching this exercise's name (loosely), e.g. for its Demo link
+function findLibraryEntryByName(name) {
+  const key = looseExerciseKey(name);
+  return key ? (window.EXERCISE_LIBRARY || []).find((entry) => looseExerciseKey(entry.name) === key) || null : null;
+}
+
+// "Demo ↗": a demonstration page (ExRx.net) in a new tab; hidden when there isn't one
+function setDemoLink(anchor, url) {
+  if (!anchor) return;
+  anchor.hidden = !url;
+  if (url) anchor.href = url;
+  else anchor.removeAttribute('href');
 }
 
 async function addSelectedLibraryExercise() {
@@ -1174,7 +1444,8 @@ async function addSelectedLibraryExercise() {
       await saveExerciseCategories();
       renderExerciseCategoryOptions();
     }
-    await postToWorkoutApi('/api/exercises', { name, category, variations, focusAreas: [], fields: ['sets', 'reps', 'weight'] });
+    const { fields, customLabel } = getLibraryExerciseFields(selectedLibraryExercise);
+    await postToWorkoutApi('/api/exercises', { name, category, variations, focusAreas: [], fields, customLabel });
     selectedLibraryExercise = null;
     librarySelection.hidden = true;
     if (librarySearch) librarySearch.value = '';
@@ -1205,39 +1476,75 @@ if (libraryAddPane && addExerciseForm) {
 }
 //////////////////////////////////////////////////////////////////////// Add from library
 
+// A new exercise for the workout builder. Exercises that track sets start with none, or with one
+// empty set when "Add first set by default" is on (withFirstSet forces one). An exercise with a
+// single custom field always has its one entry.
+function createBuilderExercise(exerciseId, exerciseName, exerciseCategory, { withFirstSet = addFirstSetByDefault } = {}) {
+  const exerciseMetadata = exerciseMetadataById[exerciseId] || {};
+  const fields = normalizeFields(exerciseMetadata.fields);
+  const trackSetsReps = fields.includes('sets') || fields.includes('reps');
+  const trackCustomOnly = fields.includes('custom') && !trackSetsReps;
+  const initialSetsList = ((trackSetsReps && withFirstSet) || trackCustomOnly) ? [{ reps: '', weight: '', note: '', custom: '' }] : [];
+
+  return {
+    id: exerciseId,
+    name: exerciseName,
+    category: exerciseCategory,
+    fields,
+    customLabel: exerciseMetadata.customLabel || '',
+    variations: normalizeExerciseVariations(exerciseMetadata.variations),
+    variation: '',
+    sets: trackSetsReps ? initialSetsList.length : 0,
+    reps: 0,
+    note: '',
+    setsList: initialSetsList,
+    activeSetIndex: 0,
+    showSR: false
+  };
+}
+
+// The dropdown option for an exercise id, or null if the exercise no longer exists
+function findExerciseOption(exerciseId) {
+  return Array.from(exerciseSelect.options).find((option) => option.value && option.value === exerciseId) || null;
+}
+
+function getExerciseOptionCategory(option) {
+  return option.dataset.category || option.parentElement?.label || 'Unknown';
+}
+
 // Prevent duplicate exercise addition
 addExerciseBtn.addEventListener('click', () => {
+    // A routine picked from the dropdown loads all its exercises (see routines.js)
+    if (selectedPickerRoutineId) {
+      const routineId = selectedPickerRoutineId;
+      clearPickerRoutineSelection();
+      if (typeof loadRoutineIntoBuilder === 'function') loadRoutineIntoBuilder(routineId);
+      return;
+    }
+
     const selectedOption = exerciseSelect.options[exerciseSelect.selectedIndex];
     const exerciseId = selectedOption.value;
     const exerciseName = selectedOption.text;
 
-    if (!exerciseId || selectedExercises.some(e => e.id === exerciseId)) {
-        showNotice("Exercise already exists", 'error');
+    if (!exerciseId) return;
+
+    // An exercise can be in the workout more than once, each time as a different variation.
+    // A repeat starts on the first variation not already used (the default counts as one).
+    const usedVariations = selectedExercises.filter((e) => e.id === exerciseId).map((e) => e.variation || '');
+    const newExercise = createBuilderExercise(exerciseId, exerciseName, getExerciseOptionCategory(selectedOption));
+    if (usedVariations.length) {
+      const freeVariation = ['', ...newExercise.variations].find((variation) => !usedVariations.includes(variation));
+      if (freeVariation === undefined) {
+        showNotice(newExercise.variations.length
+          ? `Every variation of ${exerciseName} is already in this workout`
+          : `${exerciseName} is already in this workout. Add a variation in the Exercise Editor to log it twice.`, 'error');
         return;
+      }
+      newExercise.variation = freeVariation;
+      showNotice(`Added ${exerciseName}${freeVariation ? ` – ${freeVariation}` : ''} again. Change its variation with the layers button.`, 'info');
     }
 
-    const exerciseCategory = selectedOption.dataset.category || selectedOption.parentElement?.label || 'Unknown';
-    const exerciseMetadata = exerciseMetadataById[exerciseId] || {};
-    const fields = normalizeFields(exerciseMetadata.fields);
-    const trackSetsReps = fields.includes('sets') || fields.includes('reps');
-    const trackCustomOnly = fields.includes('custom') && !trackSetsReps;
-    const initialSetsList = (trackSetsReps || trackCustomOnly) ? [{ reps: '', weight: '', note: '', custom: '' }] : [];
-
-    selectedExercises.push({
-        id: exerciseId,
-        name: exerciseName,
-        category: exerciseCategory,
-      fields,
-      customLabel: exerciseMetadata.customLabel || '',
-        variations: normalizeExerciseVariations(exerciseMetadata.variations),
-        variation: '',
-        sets: trackSetsReps ? 1 : 0,
-        reps: 0,
-        note: '',
-        setsList: initialSetsList,
-        activeSetIndex: 0,
-        showSR: false
-    });
+    selectedExercises.push(newExercise);
 
     renderExerciseList();
     saveWorkoutDraft();
@@ -1250,10 +1557,36 @@ function getSettingsRef() {
   return database.ref('settings/workoutBuilder');
 }
 
+// Settings → Exercises → "Routines": the Routines mode in the exercise dropdown (settings/workoutBuilder/showRoutines)
+let showRoutinesInDropdown = true;
+const showRoutinesCheckbox = document.getElementById('showRoutinesSetting');
+// Settings → Exercises → "Collections" (settings/workoutBuilder/showCollections). Off hides the
+// Collections mode and puts collection exercises back in the regular lists.
+let showCollectionsInDropdown = true;
+const showCollectionsCheckbox = document.getElementById('showCollectionsSetting');
+
+function applyRoutinesModeVisibility() {
+  if (showRoutinesCheckbox) showRoutinesCheckbox.checked = showRoutinesInDropdown;
+  if (showCollectionsCheckbox) showCollectionsCheckbox.checked = showCollectionsInDropdown;
+  document.querySelector('[data-grouping-mode="routines"]')?.toggleAttribute('hidden', !showRoutinesInDropdown);
+  document.querySelector('[data-grouping-mode="collections"]')?.toggleAttribute('hidden', !showCollectionsInDropdown);
+  // The last button showing gets the group's rounded right end
+  const visible = [...exerciseGroupingModeButtons].filter((button) => !button.hidden);
+  exerciseGroupingModeButtons.forEach((button) => button.classList.toggle('is-last-visible', button === visible[visible.length - 1]));
+}
+
+function isGroupingModeAvailable(mode) {
+  if (mode === EXERCISE_GROUPING_MODE.ROUTINES) return showRoutinesInDropdown;
+  if (mode === EXERCISE_GROUPING_MODE.COLLECTIONS) return showCollectionsInDropdown;
+  return true;
+}
+
 function setWorkoutBuilderGroupingMode(nextMode, persist = false) {
-  const normalizedMode = nextMode === EXERCISE_GROUPING_MODE.CATEGORY
-    ? EXERCISE_GROUPING_MODE.CATEGORY
+  let normalizedMode = Object.values(EXERCISE_GROUPING_MODE).includes(nextMode)
+    ? nextMode
     : EXERCISE_GROUPING_MODE.FREQUENCY;
+  // A saved Routines or Collections mode that's been hidden falls back to Frequency
+  if (!isGroupingModeAvailable(normalizedMode)) normalizedMode = EXERCISE_GROUPING_MODE.FREQUENCY;
 
   workoutBuilderGroupingMode = normalizedMode;
 
@@ -1288,6 +1621,13 @@ async function loadWorkoutBuilderSettings() {
     applyBuilderWidthMode();
     autoStartClock = settings.autoStartClock !== false;
     if (autoStartClockCheckbox) autoStartClockCheckbox.checked = autoStartClock;
+    addFirstSetByDefault = settings.addFirstSet === true;
+    adaptiveBuilderDisplay = settings.adaptiveDisplay !== false;
+    applyAdaptiveBuilderDisplay();
+    if (addFirstSetCheckbox) addFirstSetCheckbox.checked = addFirstSetByDefault;
+    showRoutinesInDropdown = settings.showRoutines !== false;
+    showCollectionsInDropdown = settings.showCollections !== false;
+    applyRoutinesModeVisibility();
     if (setsDisplayCheckbox) setsDisplayCheckbox.checked = setsDisplayMode === 'all';
     if (showWorkoutNotesCheckbox) showWorkoutNotesCheckbox.checked = showWorkoutNotes;
     if (showPostWorkoutNotesCheckbox) showPostWorkoutNotesCheckbox.checked = showPostWorkoutNotes;
@@ -1340,6 +1680,7 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
 
   // Clear existing options
   exerciseSelect.innerHTML = "";
+  selectedPickerRoutineId = null;
   exercisePickerTrigger.querySelector('[data-exercise-picker-label]').textContent = 'Select Exercise';
 
   // Add default placeholder option
@@ -1361,7 +1702,10 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
   Object.keys(exerciseMetadataById).forEach(key => delete exerciseMetadataById[key]);
 
   const groupByCategory = workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.CATEGORY;
-  const validCategories = (exerciseCategories.length > 0 ? exerciseCategories : Object.keys(exercises))
+  // The saved categories plus any other category that holds exercises (e.g. a collection's own
+  // exercises, filed under the collection's name), so no exercise is left out of the list
+  const listedCategories = new Set(exerciseCategories.map(normalizeCategoryName));
+  const validCategories = [...exerciseCategories, ...Object.keys(exercises).filter((category) => !listedCategories.has(normalizeCategoryName(category)))]
     .filter(category => category && typeof category === "string" && category.trim())
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
@@ -1443,11 +1787,49 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
   }
 
   renderExercisePickerOptions();
+  // The builder's width follows the widest kind of exercise, which may have just changed
+  if (fitBuilderWidth && getWidthProbeExercise()?.id !== widthProbeExerciseId) renderExerciseList();
   console.log("✅ Dropdown updated successfully.");
 }
 
+showRoutinesCheckbox?.addEventListener('change', async () => {
+  showRoutinesInDropdown = showRoutinesCheckbox.checked;
+  applyRoutinesModeVisibility();
+  // Hiding Routines while the dropdown is on it switches the dropdown to Frequency
+  if (!showRoutinesInDropdown && workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.ROUTINES) {
+    await setWorkoutBuilderGroupingMode(EXERCISE_GROUPING_MODE.FREQUENCY, true);
+    loadExercises();
+  }
+  try {
+    await getSettingsRef().update({ showRoutines: showRoutinesInDropdown });
+  } catch (error) {
+    console.error('Error saving showRoutines setting:', error);
+  }
+});
+
+showCollectionsCheckbox?.addEventListener('change', async () => {
+  showCollectionsInDropdown = showCollectionsCheckbox.checked;
+  applyRoutinesModeVisibility();
+  if (!showCollectionsInDropdown && workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.COLLECTIONS) {
+    await setWorkoutBuilderGroupingMode(EXERCISE_GROUPING_MODE.FREQUENCY, true);
+    loadExercises();
+  } else {
+    renderExercisePickerOptions(); // collection exercises join or leave the regular lists
+  }
+  try {
+    await getSettingsRef().update({ showCollections: showCollectionsInDropdown });
+  } catch (error) {
+    console.error('Error saving showCollections setting:', error);
+  }
+});
+
 exerciseGroupingModeButtons.forEach((button) => {
   button.addEventListener('click', async () => {
+    // Hold the open menu's width so a narrower list (e.g. Routines) doesn't make it shrink;
+    // released when the menu closes
+    if (exercisePickerMenu && !exercisePickerMenu.hidden) {
+      exercisePickerMenu.style.minWidth = `${exercisePickerMenu.offsetWidth}px`;
+    }
     await setWorkoutBuilderGroupingMode(button.dataset.groupingMode, true);
     loadExercises();
   });
@@ -2024,57 +2406,90 @@ initWorkoutEditorControls();
 //////////////////////////////////////////////////////////////////////// Creating exercises, editing past workouts 
 
 //-////////////////////////////////////////////////////////////////////// Exercise list editing
-// Global variables for managing the current category, exercise keys, and index.
-var currentExerciseCategory = null;    // will be set by the category selector
-var exerciseKeys = [];                 // Firebase keys for exercises in the selected category
-var exerciseDataMap = {};             // exercise metadata keyed by Firebase ID
-var currentExerciseIndex = 0;
+// The editor lists every exercise; the category dropdown only narrows the list ('' = all
+// categories). Nothing is selected until an exercise is picked (currentExerciseIndex -1).
+var currentExerciseCategory = '';      // category filter; '' = all categories
+var exerciseKeys = [];                 // ids of the exercises in the list, by category then name
+var exerciseDataMap = {};              // every exercise's record, keyed by id
+var exerciseCategoryById = {};         // id -> the category it's stored under
+var currentExerciseIndex = -1;         // index into exerciseKeys; -1 = none selected
 var pendingVariationNames = {};       // unsaved "Variation name" edits: original name -> typed name
 
+// The user's categories (empty ones too, so a new category shows up), then any others that hold exercises
+function getEditorCategories() {
+  const available = Object.keys(exerciseCatalogByCategory).filter((category) => countExercisesInCategory(category) > 0);
+  const listed = new Set(exerciseCategories.map(normalizeCategoryName));
+  return [...exerciseCategories, ...available.filter((category) => !listed.has(normalizeCategoryName(category)))];
+}
+
+// Rebuild the editor's lists from the exercise catalog, keeping the filter and the selected
+// exercise when they still exist
 function loadCategories() {
   const selector = document.getElementById('categorySelector');
   if (!selector) return;
+  const previousExerciseId = getCurrentExerciseId();
 
-  const availableCategories = Object.keys(exerciseCatalogByCategory).filter((category) => {
-    const records = getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {};
-    return Object.values(records).some((exercise) => typeof exercise?.name === 'string' && exercise.name.trim());
+  const categories = getEditorCategories();
+  exerciseDataMap = {};
+  exerciseCategoryById = {};
+  categories.forEach((category) => {
+    Object.entries(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {}).forEach(([id, exercise]) => {
+      if (exercise && typeof exercise.name === 'string' && exercise.name.trim()) {
+        exerciseDataMap[id] = exercise;
+        exerciseCategoryById[id] = category;
+      }
+    });
   });
-  const categories = [...new Set([
-    ...exerciseCategories.filter((category) => availableCategories.includes(category)),
-    ...availableCategories
-  ])];
 
-  selector.replaceChildren(...categories.map((category) => new Option(category, category)));
-  currentExerciseCategory = categories[0] || null;
-  if (currentExerciseCategory) {
-    loadExercisesEditor();
-  } else {
-    exerciseKeys = [];
-    exerciseDataMap = {};
-    renderExerciseSelector();
-    document.getElementById('exerciseeditorsection').innerHTML = '<p>No exercises found.</p>';
-  }
+  renderEditorCategoryOptions();
+  applyEditorCategoryFilter(previousExerciseId, { redisplay: true });
+}
+
+// "All categories", each category, then Add / Remove category
+function renderEditorCategoryOptions() {
+  const selector = document.getElementById('categorySelector');
+  if (!selector) return;
+  const categories = getEditorCategories();
+  selector.replaceChildren(new Option('All categories', ''), ...categories.map((category) => new Option(category, category)));
+  appendCategoryManageOptions(selector);
+  if (!categories.includes(currentExerciseCategory)) currentExerciseCategory = '';
+  selector.value = currentExerciseCategory;
+}
+
+// exerciseKeys = the exercises in the chosen category (or all), in category order then by name.
+// The exercise is only redrawn when the selection changes, so unsaved edits survive a filter change.
+function applyEditorCategoryFilter(selectedId = getCurrentExerciseId(), { redisplay = false } = {}) {
+  const previousId = getCurrentExerciseId();
+  const categoryOrder = getEditorCategories();
+  exerciseKeys = Object.keys(exerciseDataMap)
+    .filter((id) => !currentExerciseCategory || exerciseCategoryById[id] === currentExerciseCategory)
+    .sort((a, b) => (categoryOrder.indexOf(exerciseCategoryById[a]) - categoryOrder.indexOf(exerciseCategoryById[b]))
+      || exerciseDataMap[a].name.localeCompare(exerciseDataMap[b].name, undefined, { sensitivity: 'base' }));
+  currentExerciseIndex = exerciseKeys.indexOf(selectedId);
+  renderExerciseSelector();
+  if (redisplay || !previousId || getCurrentExerciseId() !== previousId) displayExercise();
+  else updateEditorCounter();
+}
+
+function updateEditorCounter() {
+  const counter = document.getElementById('exerciseCounter');
+  if (!counter) return;
+  counter.textContent = currentExerciseIndex >= 0
+    ? `Exercise ${currentExerciseIndex + 1} of ${exerciseKeys.length}`
+    : `${exerciseKeys.length} exercise${exerciseKeys.length === 1 ? '' : 's'}`;
 }
 
 // Reload the editor from the latest exercise list (e.g. after adding an exercise),
-// staying on the category and exercise that were showing.
+// staying on the filter and exercise that were showing.
 function refreshExerciseEditor() {
-  const previousCategory = currentExerciseCategory;
-  const previousExerciseId = getCurrentExerciseId();
   loadCategories();
+}
 
-  const selector = document.getElementById('categorySelector');
-  if (!selector || !previousCategory || ![...selector.options].some((option) => option.value === previousCategory)) return;
-  selector.value = previousCategory;
-  currentExerciseCategory = previousCategory;
-  loadExercisesEditor();
-
-  const index = exerciseKeys.indexOf(previousExerciseId);
-  if (index > 0) {
-    currentExerciseIndex = index;
-    renderExerciseSelector();
-    displayExercise();
-  }
+function selectEditorExercise(exerciseId) {
+  captureVolumeRows();
+  currentExerciseIndex = exerciseKeys.indexOf(exerciseId);
+  renderExerciseSelector();
+  displayExercise();
 }
 
 // Exercise editor: Category → Exercise → Variation.
@@ -2153,17 +2568,100 @@ function getExerciseDataPath(exerciseId) {
 }
 
 // Event listener for when the category selection changes.
+// Add / remove categories from the editor's dropdown too (set up first, so its change
+// listener handles those two options before the filter below sees them)
+setupCategoryManager({
+  select: document.getElementById('categorySelector'),
+  addRow: document.getElementById('editorCategoryAddRow'),
+  input: document.getElementById('editorNewCategoryInput'),
+  addHint: document.getElementById('editorCategoryAddHint'),
+  removeRow: document.getElementById('editorCategoryRemoveRow'),
+  chips: document.getElementById('editorCategoryChips'),
+  removeHint: document.getElementById('editorCategoryRemoveHint'),
+  saveBtn: document.getElementById('editorSaveCategoryBtn'),
+  cancelBtn: document.getElementById('editorCancelCategoryBtn'),
+  doneBtn: document.getElementById('editorDoneRemovingCategoriesBtn'),
+  renderOptions: () => renderEditorCategoryOptions(),
+  // A newly added category becomes the filter (it's empty, so the list says so); after removing
+  // categories the filter may have fallen back to All, so the list is always rebuilt
+  onChosen: (value) => {
+    currentExerciseCategory = value;
+    applyEditorCategoryFilter();
+  }
+});
+
+// The category only filters the exercise list; the selected exercise stays if it's still in it
 document.getElementById("categorySelector").addEventListener("change", function(e) {
   captureVolumeRows();
   currentExerciseCategory = e.target.value;
-  loadExercisesEditor();
+  applyEditorCategoryFilter();
 });
 
-document.getElementById("exerciseSelector").addEventListener("change", function(e) {
-  captureVolumeRows();
-  currentExerciseIndex = exerciseKeys.indexOf(e.target.value);
-  if (currentExerciseIndex < 0) currentExerciseIndex = 0;
-  displayExercise();
+// ---- Exercise picker (search + category headings) ----
+const editorExercisePicker = document.getElementById('editorExercisePicker');
+const editorExercisePickerTrigger = document.getElementById('editorExercisePickerTrigger');
+const editorExercisePickerMenu = document.getElementById('editorExercisePickerMenu');
+const editorExerciseSearch = document.getElementById('editorExerciseSearch');
+const editorExerciseOptions = document.getElementById('editorExerciseOptions');
+const editorExerciseEmpty = document.getElementById('editorExerciseEmpty');
+
+function setEditorExercisePickerOpen(open) {
+  if (!editorExercisePickerMenu) return;
+  editorExercisePickerMenu.hidden = !open;
+  editorExercisePickerTrigger.setAttribute('aria-expanded', String(open));
+  editorExerciseSearch.value = '';
+  filterEditorExerciseOptions();
+  if (open) {
+    editorExerciseSearch.focus();
+    editorExerciseOptions.querySelector('.exercise-picker-option.active')?.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+// Hides exercises that don't contain the search text, and headings left with none
+function filterEditorExerciseOptions() {
+  const query = editorExerciseSearch.value.trim().toLowerCase();
+  let heading = null;
+  let headingHasMatch = false;
+  let anyMatch = false;
+  const closeHeading = () => { if (heading) heading.hidden = !headingHasMatch; };
+  Array.from(editorExerciseOptions.children).forEach((element) => {
+    if (element.classList.contains('exercise-picker-category')) {
+      closeHeading();
+      heading = element;
+      headingHasMatch = false;
+      return;
+    }
+    const matches = !query || element.textContent.toLowerCase().includes(query);
+    element.hidden = !matches;
+    if (matches) { headingHasMatch = true; anyMatch = true; }
+  });
+  closeHeading();
+  editorExerciseEmpty.hidden = anyMatch;
+  editorExerciseEmpty.textContent = exerciseKeys.length ? 'No matching exercises' : 'No exercises in this category';
+}
+
+editorExercisePickerTrigger?.addEventListener('click', () => setEditorExercisePickerOpen(editorExercisePickerMenu.hidden));
+editorExerciseSearch?.addEventListener('input', filterEditorExerciseOptions);
+editorExerciseSearch?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter') return;
+  event.preventDefault();
+  Array.from(editorExerciseOptions.querySelectorAll('.exercise-picker-option')).find((option) => !option.hidden)?.click();
+});
+editorExerciseOptions?.addEventListener('click', (event) => {
+  const option = event.target.closest('.exercise-picker-option');
+  if (!option) return;
+  setEditorExercisePickerOpen(false);
+  editorExercisePickerTrigger.focus();
+  selectEditorExercise(option.dataset.exerciseId);
+});
+document.addEventListener('click', (event) => {
+  if (editorExercisePicker && !editorExercisePickerMenu.hidden && !editorExercisePicker.contains(event.target)) setEditorExercisePickerOpen(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && editorExercisePickerMenu && !editorExercisePickerMenu.hidden) {
+    setEditorExercisePickerOpen(false);
+    editorExercisePickerTrigger.focus();
+  }
 });
 
 document.getElementById("variationSelector").addEventListener("change", function(e) {
@@ -2175,10 +2673,11 @@ document.getElementById("variationSelector").addEventListener("change", function
 
 async function persistExerciseUpdates(exerciseId, updates) {
   await database.ref(getExerciseDataPath(exerciseId)).update(updates);
-  [exerciseDataMap[exerciseId], exerciseMetadataById[exerciseId]].forEach((record) => {
+  // Keep this page's copies in step (the catalog's record too, which the volume table reads)
+  const catalogRecord = Object.values(exerciseCatalogByCategory || {}).map((bucket) => bucket?.[exerciseId]).find(Boolean);
+  [...new Set([exerciseDataMap[exerciseId], exerciseMetadataById[exerciseId], catalogRecord])].forEach((record) => {
     if (record) Object.assign(record, updates);
   });
-  renderVolumeMatrix();
 }
 
 // "Add variation" swaps the variation selector for an inline name box.
@@ -2282,36 +2781,45 @@ const deleteExoBtn = document.getElementById("deleteExoBtn");
 if (saveExoBtn) saveExoBtn.addEventListener("click", saveexo);
 if (deleteExoBtn) deleteExoBtn.addEventListener("click", deleteexo);
 
-function loadExercisesEditor() {
-  if (!currentExerciseCategory) return;
-  const categoryExercises = getExerciseCategoryBucket(exerciseCatalogByCategory, currentExerciseCategory) || {};
-  exerciseDataMap = Object.fromEntries(Object.entries(categoryExercises)
-    .filter(([, exercise]) => exercise && typeof exercise.name === 'string' && exercise.name.trim()));
-  exerciseKeys = Object.keys(exerciseDataMap);
-  currentExerciseIndex = 0;
-  renderExerciseSelector();
-  displayExercise();
-}
-
+// The picker's options (a heading per category) and its button label
 function renderExerciseSelector() {
-  var selector = document.getElementById("exerciseSelector");
-  if (!selector) return;
-  selector.replaceChildren(...exerciseKeys.map((exerciseId) =>
-    new Option(exerciseDataMap[exerciseId]?.name || exerciseId, exerciseId)));
-  if (exerciseKeys.length > 0) {
-    selector.value = exerciseKeys[currentExerciseIndex] || exerciseKeys[0];
-  }
+  if (!editorExerciseOptions) return;
+  const selectedId = getCurrentExerciseId();
+  editorExerciseOptions.replaceChildren();
+  let lastCategory = null;
+  exerciseKeys.forEach((exerciseId) => {
+    const category = exerciseCategoryById[exerciseId];
+    if (category !== lastCategory) {
+      const heading = document.createElement('div');
+      heading.className = 'exercise-picker-category';
+      heading.textContent = category;
+      editorExerciseOptions.appendChild(heading);
+      lastCategory = category;
+    }
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = `exercise-picker-option${exerciseId === selectedId ? ' active' : ''}`;
+    option.dataset.exerciseId = exerciseId;
+    option.textContent = exerciseDataMap[exerciseId]?.name || exerciseId;
+    editorExerciseOptions.appendChild(option);
+  });
+  filterEditorExerciseOptions();
+
+  const label = editorExercisePickerTrigger?.querySelector('[data-editor-exercise-label]');
+  if (label) label.textContent = selectedId ? exerciseDataMap[selectedId]?.name || 'Exercise' : 'Select exercise';
+  editorExercisePickerTrigger?.classList.toggle('is-placeholder', !selectedId);
 }
 
 function renderVariationSelector() {
   const selector = document.getElementById('variationSelector');
   if (!selector) return;
-  selector.replaceChildren(
-    new Option('Default (no variation)', ''),
-    ...editorVariations.map((variation) => new Option(variation, variation))
-  );
-  selector.value = currentVariation;
-  selector.disabled = exerciseKeys.length === 0;
+  // Nothing to choose until an exercise is picked
+  const hasExercise = Boolean(getCurrentExerciseId());
+  selector.replaceChildren(...(hasExercise
+    ? [new Option('Default (no variation)', ''), ...editorVariations.map((variation) => new Option(variation, variation))]
+    : [new Option('Select variation', '')]));
+  selector.value = hasExercise ? currentVariation : '';
+  selector.disabled = !hasExercise;
   // Close an open "Add variation" box (e.g. after switching exercise)
   const addRow = document.getElementById('variationAddRow');
   if (addRow && !addRow.hidden) {
@@ -2326,7 +2834,7 @@ function renderVariationSelector() {
 
 function updateVariationButtons() {
   renderVariationNameField();
-  const hasExercise = exerciseKeys.length > 0;
+  const hasExercise = Boolean(getCurrentExerciseId());
   if (addExerciseVariationButton) addExerciseVariationButton.disabled = !hasExercise;
   if (removeExerciseVariationButton) removeExerciseVariationButton.disabled = !hasExercise || !currentVariation;
 }
@@ -2441,6 +2949,111 @@ async function renameVariationInHistory(exerciseId, from, to) {
   ]);
 }
 
+// ---- Renaming or merging exercises ----
+// Renaming an exercise (or merging it into another by giving it that one's name) moves every stored
+// copy of its name and id: past workouts (older ones may have only the name, and get the id added),
+// 1RM records, routines, collections, the workout draft and Progress's tracked list. Each step only
+// changes entries that still point at the old exercise, so running it again after a failure is safe.
+async function moveExerciseHistory(fromId, fromName, toId, toName) {
+  const oldName = String(fromName || '').trim().toLowerCase();
+  const isOld = (id, name) => (id ? id === fromId : typeof name === 'string' && name.trim().toLowerCase() === oldName);
+  const read = (path) => database.ref(path).once('value').then((snapshot) => snapshot.val());
+  const [workouts, e1rm, tracked, routines, collections, draft] = await Promise.all(
+    ['workouts', 'estimoneRepMax', 'settings/progress/trackedExercises', 'routines', 'collections', 'workoutDraft'].map(read));
+  const counts = { workouts: 0, entries: 0, records: 0 };
+  const writes = [];
+
+  const workoutUpdates = {};
+  Object.entries(workouts || {}).forEach(([workoutId, workout]) => {
+    let touched = false;
+    Object.entries(workout?.exercises || {}).forEach(([index, exercise]) => {
+      if (!exercise || !isOld(exercise.id, exercise.name)) return;
+      workoutUpdates[`${workoutId}/exercises/${index}/id`] = toId;
+      workoutUpdates[`${workoutId}/exercises/${index}/name`] = toName;
+      counts.entries++;
+      touched = true;
+    });
+    if (touched) counts.workouts++;
+  });
+  if (Object.keys(workoutUpdates).length) writes.push(database.ref('workouts').update(workoutUpdates));
+
+  const e1rmUpdates = {};
+  Object.entries(e1rm || {}).forEach(([entryId, entry]) => {
+    if (!entry || !isOld(entry.exercise, entry.name)) return;
+    e1rmUpdates[`${entryId}/exercise`] = toId;
+    e1rmUpdates[`${entryId}/name`] = toName;
+    counts.records++;
+  });
+  if (Object.keys(e1rmUpdates).length) writes.push(database.ref('estimoneRepMax').update(e1rmUpdates));
+
+  // Progress's tracked choices are keyed by id (and id~variation); a merge moves them to the other id
+  if (fromId !== toId && tracked) {
+    const trackedUpdates = {};
+    Object.entries(tracked).forEach(([key, value]) => {
+      if (key !== fromId && !key.startsWith(`${fromId}~`)) return;
+      const newKey = toId + key.slice(fromId.length);
+      if (!(newKey in tracked)) trackedUpdates[newKey] = value;
+      trackedUpdates[key] = null;
+    });
+    if (Object.keys(trackedUpdates).length) writes.push(database.ref('settings/progress/trackedExercises').update(trackedUpdates));
+  }
+
+  // Routines and collections: point at the new id and name, without listing an exercise twice
+  [['routines', routines], ['collections', collections]].forEach(([path, lists]) => {
+    Object.entries(lists || {}).forEach(([listId, list]) => {
+      const exercises = Array.isArray(list?.exercises) ? list.exercises : Object.values(list?.exercises || {});
+      if (!exercises.some((exercise) => exercise?.id === fromId)) return;
+      const seen = new Set();
+      const moved = exercises.map((exercise) => (exercise?.id === fromId ? { id: toId, name: toName } : exercise))
+        .filter((exercise) => exercise && !seen.has(exercise.id) && seen.add(exercise.id));
+      writes.push(database.ref(`${path}/${listId}/exercises`).set(moved));
+    });
+  });
+
+  const draftExercises = Array.isArray(draft?.exercises) ? draft.exercises : Object.values(draft?.exercises || {});
+  if (draftExercises.some((exercise) => exercise && isOld(exercise.id, exercise.name))) {
+    writes.push(database.ref('workoutDraft/exercises').set(draftExercises.map((exercise) => (
+      exercise && isOld(exercise.id, exercise.name) ? { ...exercise, id: toId, name: toName } : exercise))));
+  }
+
+  await Promise.all(writes);
+
+  // This page's copies: the workout being built, and the routine / collection lists
+  selectedExercises.forEach((exercise) => {
+    if (isOld(exercise.id, exercise.name)) Object.assign(exercise, { id: toId, name: toName });
+  });
+  if (typeof reloadExerciseLists === 'function') reloadExerciseLists();
+  return counts;
+}
+
+// Merge one exercise into another: its history moves over (see moveExerciseHistory), the other
+// exercise gains its variations, and any muscle group contributions it doesn't have yet (the
+// default, or a variation's own), then the merged exercise is deleted.
+async function mergeExerciseInto(fromId, toId) {
+  const from = exerciseDataMap[fromId];
+  const to = exerciseDataMap[toId];
+  const counts = await moveExerciseHistory(fromId, from.name, toId, to.name);
+  // The other exercise's own older entries that have only its name get its id too
+  await moveExerciseHistory(toId, to.name, toId, to.name);
+
+  const toMappings = normalizeVolumeMappings(to.volumeMappings);
+  const covered = new Set(toMappings.map((mapping) => mapping.variation));
+  const carried = normalizeVolumeMappings(from.volumeMappings).filter((mapping) => !covered.has(mapping.variation));
+  await persistExerciseUpdates(toId, {
+    variations: [...new Set([...normalizeExerciseVariations(to.variations), ...normalizeExerciseVariations(from.variations)])],
+    volumeMappings: [...toMappings, ...carried]
+  });
+  await database.ref(getExerciseDataPath(fromId)).remove();
+  return counts;
+}
+
+function describeMovedHistory(counts) {
+  const parts = [];
+  if (counts.entries) parts.push(`${counts.entries} entr${counts.entries === 1 ? 'y' : 'ies'} in ${counts.workouts} workout${counts.workouts === 1 ? '' : 's'}`);
+  if (counts.records) parts.push(`${counts.records} 1RM record${counts.records === 1 ? '' : 's'}`);
+  return parts.length ? ` (${parts.join(', ')})` : '';
+}
+
 // Display the selected exercise: details, its variations, and the volume mappings of the selected variation.
 function displayExercise() {
   const detailsSection = document.getElementById('exerciseeditorsection');
@@ -2450,13 +3063,16 @@ function displayExercise() {
 
   currentVariation = '';
   pendingVariationNames = {};
+  if (saveExoBtn) saveExoBtn.disabled = !data;
+  if (deleteExoBtn) deleteExoBtn.disabled = !data;
   if (!data) {
     editorVariations = [];
     editorVolumeMappings = [];
-    detailsSection.innerHTML = '<p>No exercises found in this category.</p>';
+    detailsSection.innerHTML = exerciseKeys.length
+      ? '<p class="exo-hint">Pick an exercise to edit it. Search for it, or narrow the list by category.</p>'
+      : '<p class="exo-hint">No exercises in this category.</p>';
     volumeSection.innerHTML = '';
-    const emptyCounter = document.getElementById('exerciseCounter');
-    if (emptyCounter) emptyCounter.textContent = 'Exercise 0 of 0';
+    updateEditorCounter();
     renderVariationSelector();
     return;
   }
@@ -2469,8 +3085,13 @@ function displayExercise() {
   detailsSection.innerHTML = `
     <h3>Exercise Details</h3>
     <div class="exo-field">
-      <label for="exercise_name">Name</label>
+      <label for="exercise_name">Name${findLibraryEntryByName(data.name)?.link ? ` <a class="exo-demo-link" href="${escapeExerciseHtml(findLibraryEntryByName(data.name).link)}" target="_blank" rel="noopener noreferrer" title="Demonstration on ExRx.net (opens in a new tab)">Demo ↗</a>` : ''}</label>
       <input type="text" id="exercise_name" value="${escapeExerciseHtml(data.name)}">
+    </div>
+    <div class="exo-field">
+      <label for="exercise_category">Category</label>
+      <select id="exercise_category">${[...new Set([...exerciseCategories, exerciseCategoryById[exerciseId]].filter(Boolean))]
+        .map((category) => `<option value="${escapeExerciseHtml(category)}"${category === exerciseCategoryById[exerciseId] ? ' selected' : ''}>${escapeExerciseHtml(category)}</option>`).join('')}</select>
     </div>
     <div class="exo-field" id="variationNameContainer" hidden>
       <label for="exercise_variation_name">Variation name</label>
@@ -2491,8 +3112,7 @@ function displayExercise() {
       <input type="text" id="exercise_custom_label" value="${escapeExerciseHtml(data.customLabel)}">
     </div>
   `;
-  const counter = document.getElementById('exerciseCounter');
-  if (counter) counter.textContent = `Exercise ${currentExerciseIndex + 1} of ${exerciseKeys.length}`;
+  updateEditorCounter();
   setupExerciseTrackingToggle();
   document.getElementById('exercise_variation_name')?.addEventListener('input', trackVariationNameInput);
   renderVariationSelector();
@@ -2508,39 +3128,37 @@ function buildVolumeRowHtml(group, weight) {
     </tr>`;
 }
 
-// "Show table": every exercise and variation against every muscle group, below the editor.
-// A variation without mappings of its own uses the exercise default, shown greyed.
-let volumeMatrixOpen = false;
+// Volume table (its own panel under Exercises): every exercise and variation against every muscle
+// group, each cell an editable contribution (0–1) saved when it's changed. A variation without
+// contributions of its own uses its exercise's default, shown as grey placeholders; editing one of
+// its cells first copies the defaults to it, since a variation with any of its own replaces the
+// default completely (see volume.js).
+const volumeTableEditedIds = new Set(); // exercises changed here, so the editor re-reads them
 
 function renderVolumeMatrix() {
   const section = document.getElementById('volumeMatrixSection');
-  if (!section) return;
-  section.hidden = !volumeMatrixOpen;
-  if (!volumeMatrixOpen) {
-    section.innerHTML = '';
-    return;
-  }
+  if (!section || volumeTablePanel?.classList.contains('hidden')) return;
 
   const categoryNames = Object.keys(exerciseCatalogByCategory || {});
   const orderedCategories = [...new Set([...exerciseCategories.filter((name) => categoryNames.includes(name)), ...categoryNames])];
   const rows = [];
   const groups = new Set(volumeMuscleGroups);
   orderedCategories.forEach((category) => {
-    const exercises = Object.values(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {})
-      .filter((exercise) => exercise && typeof exercise.name === 'string' && exercise.name.trim())
-      .sort((a, b) => a.name.localeCompare(b.name));
-    exercises.forEach((exercise) => {
+    const exercises = Object.entries(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {})
+      .filter(([, exercise]) => exercise && typeof exercise.name === 'string' && exercise.name.trim())
+      .sort(([, a], [, b]) => a.name.localeCompare(b.name));
+    exercises.forEach(([id, exercise]) => {
       const mappings = normalizeVolumeMappings(exercise.volumeMappings);
       mappings.forEach((mapping) => groups.add(mapping.muscleGroup));
       const weightsFor = (variation) => Object.fromEntries(mappings
         .filter((mapping) => mapping.variation === variation && mapping.weight > 0)
         .map((mapping) => [mapping.muscleGroup, mapping.weight]));
       const defaults = weightsFor('');
-      rows.push({ category, name: exercise.name, variation: '', weights: defaults, inherited: false });
+      rows.push({ id, category, name: exercise.name, variation: '', weights: defaults, inherited: false });
       normalizeExerciseVariations(exercise.variations).forEach((variation) => {
         const own = weightsFor(variation);
         const inherited = Object.keys(own).length === 0;
-        rows.push({ category, name: exercise.name, variation, weights: inherited ? defaults : own, inherited });
+        rows.push({ id, category, name: exercise.name, variation, weights: inherited ? defaults : own, inherited });
       });
     });
   });
@@ -2554,24 +3172,68 @@ function renderVolumeMatrix() {
       : '';
     lastCategory = row.category;
     const cells = groupList.map((group) => {
-      const weight = row.weights[group];
-      return `<td${row.inherited && weight ? ' class="volume-matrix-inherited" title="Uses the exercise default"' : ''}>${weight ? weight : ''}</td>`;
+      const weight = row.weights[group] || '';
+      const label = `${row.name}${row.variation ? ` – ${row.variation}` : ''}: ${group}`;
+      // Inherited defaults show as placeholders, so the box is empty until the variation gets its own
+      return `<td><input type="number" class="volume-matrix-input" min="0" max="1" step="0.05" inputmode="decimal"
+        data-exercise-id="${escapeExerciseHtml(row.id)}" data-variation="${escapeExerciseHtml(row.variation)}" data-group="${escapeExerciseHtml(group)}"
+        ${row.inherited ? `placeholder="${weight}" title="Uses the exercise default"` : `value="${weight}"`} aria-label="${escapeExerciseHtml(label)}"></td>`;
     }).join('');
     return `${categoryRow}<tr><td>${row.variation ? '' : escapeExerciseHtml(row.name)}</td><td>${row.variation ? escapeExerciseHtml(row.variation) : '<span class="exo-hint">Default</span>'}</td>${cells}</tr>`;
   }).join('');
 
   section.innerHTML = `
-    <div class="exo-card-header"><h3>All exercises <small>(muscle group contributions)</small></h3></div>
-    <p class="exo-hint">Grey values are variations using their exercise's default.</p>
     <div class="volume-matrix-scroll">
-      <table class="volume-matrix">${rows.length ? `<thead>${header}</thead><tbody>${bodyHtml}</tbody>` : '<tbody><tr><td class="exo-hint">No exercises yet.</td></tr></tbody>'}</table>
+      <table class="volume-matrix volume-matrix-editable">${rows.length ? `<thead>${header}</thead><tbody>${bodyHtml}</tbody>` : '<tbody><tr><td class="exo-hint">No exercises yet.</td></tr></tbody>'}</table>
     </div>`;
 }
+
+// Save one cell: set (or clear, when empty or 0) that exercise/variation's contribution for the group
+async function saveVolumeMatrixCell(input) {
+  const { exerciseId, variation, group } = input.dataset;
+  const record = Object.values(exerciseCatalogByCategory || {}).map((bucket) => bucket?.[exerciseId]).find(Boolean);
+  if (!record) return;
+  let weight = input.value === '' ? 0 : Number(input.value);
+  if (!Number.isFinite(weight)) weight = 0;
+  weight = Math.min(Math.max(weight, 0), 1);
+  if (input.value !== '' && weight > 0) input.value = String(weight);
+
+  let mappings = normalizeVolumeMappings(record.volumeMappings);
+  // A variation's first own value: start from a copy of the defaults so the rest still count
+  if (variation && !mappings.some((mapping) => mapping.variation === variation)) {
+    mappings = [...mappings, ...mappings.filter((mapping) => mapping.variation === '').map((mapping) => ({ ...mapping, variation }))];
+  }
+  mappings = mappings.filter((mapping) => !(mapping.variation === variation && mapping.muscleGroup === group));
+  if (weight > 0) mappings.push({ variation, muscleGroup: group, weight });
+
+  input.classList.remove('is-saved', 'is-error');
+  try {
+    await persistExerciseUpdates(exerciseId, { volumeMappings: mappings });
+    volumeTableEditedIds.add(exerciseId);
+    input.classList.add('is-saved');
+    // The variation's other cells now hold its own values instead of grey defaults
+    if (variation) {
+      input.closest('tr').querySelectorAll('.volume-matrix-input').forEach((cell) => {
+        if (cell === input || cell.value !== '' || !cell.placeholder) return;
+        cell.value = cell.placeholder;
+        cell.removeAttribute('placeholder');
+        cell.removeAttribute('title');
+      });
+    }
+  } catch (error) {
+    input.classList.add('is-error');
+    showNotice(`Could not save the contribution: ${error.message}`, 'error');
+  }
+}
+
+document.getElementById('volumeMatrixSection')?.addEventListener('change', (event) => {
+  if (event.target.matches('.volume-matrix-input')) saveVolumeMatrixCell(event.target);
+});
 
 function renderVolumeTracking() {
   const section = document.getElementById('volumeTrackingSection');
   if (!section) return;
-  if (exerciseKeys.length === 0) {
+  if (!getCurrentExerciseId()) {
     section.innerHTML = '';
     return;
   }
@@ -2592,7 +3254,6 @@ function renderVolumeTracking() {
       <h3>Target Groups <small>(Volume Tracking)</small></h3>
       <span class="exo-card-header-actions">
         <button type="button" id="addVolumeMappingBtn" class="btn btn-sm btn-outline-secondary">Add muscle group</button>
-        <button type="button" id="toggleVolumeMatrixBtn" class="btn btn-sm btn-outline-secondary" aria-expanded="${volumeMatrixOpen}" aria-controls="volumeMatrixSection">${volumeMatrixOpen ? 'Hide table' : 'Show table'}</button>
       </span>
     </div>
     <p class="exo-hint">${scope}</p>
@@ -2607,15 +3268,6 @@ function renderVolumeTracking() {
       Effective volume = completed sets × contribution. A contribution of 1.0 is a primary target and counts as direct sets; lower values are secondary muscles that assist the movement.
     </div>
   `;
-
-  document.getElementById('toggleVolumeMatrixBtn').addEventListener('click', (event) => {
-    volumeMatrixOpen = !volumeMatrixOpen;
-    event.currentTarget.textContent = volumeMatrixOpen ? 'Hide table' : 'Show table';
-    event.currentTarget.setAttribute('aria-expanded', String(volumeMatrixOpen));
-    renderVolumeMatrix();
-    if (volumeMatrixOpen) document.getElementById('volumeMatrixSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  });
-  renderVolumeMatrix();
 
   const body = document.getElementById('volumeMappingRows');
   const addButton = document.getElementById('addVolumeMappingBtn');
@@ -2770,7 +3422,7 @@ function setupExerciseTrackingToggle() {
 }
 
 // Save the exercise details and every variation's volume mappings.
-function saveexo() {
+async function saveexo() {
   const exerciseId = getCurrentExerciseId();
   if (!exerciseId) return;
 
@@ -2778,6 +3430,34 @@ function saveexo() {
   const name = document.getElementById("exercise_name").value.trim();
   if (!name) {
     showNotice('Exercise name is required.', 'error');
+    return;
+  }
+
+  // Renamed to the name of another exercise (spelling aside, e.g. "Tricep extensions" for
+  // "Tricep Extension"): offer to merge into that one rather than end up with two
+  const oldName = exerciseDataMap[exerciseId]?.name || '';
+  const nameChanged = name !== oldName;
+  const mergeTargetId = nameChanged && looseExerciseKey(name) !== looseExerciseKey(oldName)
+    ? Object.keys(exerciseDataMap).find((id) => id !== exerciseId && looseExerciseKey(exerciseDataMap[id].name) === looseExerciseKey(name))
+    : null;
+  if (mergeTargetId) {
+    const targetName = exerciseDataMap[mergeTargetId].name;
+    const confirmed = await confirmInPlace(saveExoBtn, { question: `${targetName} already exists. Merge ${oldName} into it?`, yesLabel: 'Merge', noLabel: 'Cancel', timeout: 10000 });
+    if (!confirmed) return;
+    try {
+      const counts = await mergeExerciseInto(exerciseId, mergeTargetId);
+      await loadExercises();
+      refreshExerciseEditor();
+      selectEditorExercise(mergeTargetId);
+      renderExerciseList();
+      saveWorkoutDraft();
+      refreshAfterWorkoutSaved();
+      if (window.refreshTrackedExercises) window.refreshTrackedExercises();
+      showNotice(`Merged ${oldName} into ${targetName}${describeMovedHistory(counts)}`, 'success');
+    } catch (error) {
+      console.error('Error merging exercises:', error);
+      showNotice(`Could not finish the merge: ${error.message}. Save again to retry; nothing is lost.`, 'error');
+    }
     return;
   }
 
@@ -2832,8 +3512,11 @@ function saveexo() {
   fields.forEach((f, i) => { storedFields[i] = f; });
 
   const customLabelInput = document.getElementById("exercise_custom_label");
+  const previousCategory = exerciseCategoryById[exerciseId];
+  const category = document.getElementById('exercise_category')?.value || previousCategory;
   const updatedData = {
     name,
+    category,
     note: document.getElementById("exercise_note").value,
     fields: storedFields,
     customLabel: fields.includes('custom') && customLabelInput ? customLabelInput.value || '' : '',
@@ -2842,6 +3525,19 @@ function saveexo() {
     // Saved with the new names, so past workouts get renamed even if that step fails now
     pendingVariationRenames: historyQueue.length ? historyQueue : null
   };
+
+  // A new name goes into the history first and onto the exercise last, so if anything fails part
+  // way, saving again still sees the rename and finishes it
+  let movedCounts = null;
+  if (nameChanged) {
+    try {
+      movedCounts = await moveExerciseHistory(exerciseId, oldName, exerciseId, name);
+    } catch (error) {
+      console.error('Error renaming exercise in past workouts:', error);
+      showNotice(`Could not rename ${oldName} everywhere: ${error.message}. Save again to retry; nothing is lost.`, 'error');
+      return;
+    }
+  }
 
   persistExerciseUpdates(exerciseId, updatedData)
     .then(async () => {
@@ -2867,7 +3563,14 @@ function saveexo() {
       }
       showNotice(historyError
         ? 'Exercise saved, but past workouts still have the old variation name. Press Save to try again (it also retries when the app opens).'
-        : "Exercise updated successfully!", historyError ? 'error' : 'success');
+        : nameChanged ? `Renamed ${oldName} to ${name}${describeMovedHistory(movedCounts || {})}` : "Exercise updated successfully!", historyError ? 'error' : 'success');
+      if (nameChanged) {
+        // Lists that show names (exercise dropdowns, saved workouts, Progress) pick up the new one
+        await loadExercises();
+        refreshExerciseEditor();
+        refreshAfterWorkoutSaved();
+        if (window.refreshTrackedExercises) window.refreshTrackedExercises();
+      }
       renderExerciseSelector();
       // Apply the new fields to this exercise if it's already in the builder
       exerciseMetadataById[exerciseId] = {
@@ -2877,8 +3580,14 @@ function saveexo() {
         variations: normalizeExerciseVariations(updatedData.variations)
       };
       if (selectedExercises.some((exercise) => exercise.id === exerciseId)) {
+        selectedExercises.forEach((exercise) => { if (exercise.id === exerciseId) exercise.category = category; });
         renderExerciseList();
         saveWorkoutDraft();
+      }
+      // Moved to another category: reload the lists so it's filed under the new one everywhere
+      if (category !== previousCategory) {
+        await loadExercises();
+        refreshExerciseEditor();
       }
     })
     .catch(error => showNotice("Error updating exercise: " + error.message, 'error'));
@@ -2887,7 +3596,10 @@ function saveexo() {
 function stepExercise(direction) {
   if (exerciseKeys.length === 0) return;
   captureVolumeRows();
-  currentExerciseIndex = (currentExerciseIndex + direction + exerciseKeys.length) % exerciseKeys.length;
+  // With nothing selected, › starts at the first exercise and ‹ at the last
+  currentExerciseIndex = currentExerciseIndex < 0
+    ? (direction > 0 ? 0 : exerciseKeys.length - 1)
+    : (currentExerciseIndex + direction + exerciseKeys.length) % exerciseKeys.length;
   renderExerciseSelector();
   displayExercise();
 }
@@ -2905,12 +3617,13 @@ async function deleteexo(event) {
   database.ref(getExerciseDataPath(exerciseId)).remove()
     .then(() => {
       showNotice("Exercise deleted successfully!", 'success');
-      const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, currentExerciseCategory);
+      const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, exerciseCategoryById[exerciseId]);
       if (bucket) delete bucket[exerciseId];
       delete exerciseMetadataById[exerciseId];
       delete exerciseDataMap[exerciseId];
+      delete exerciseCategoryById[exerciseId];
       exerciseKeys.splice(currentExerciseIndex, 1);
-      currentExerciseIndex = Math.min(currentExerciseIndex, Math.max(exerciseKeys.length - 1, 0));
+      currentExerciseIndex = -1; // back to nothing selected
       renderExerciseSelector();
       displayExercise();
     })
@@ -2946,22 +3659,55 @@ function alignExerciseColumns() {
   }
 }
 
+// "Fit builder to visible columns": the builder is sized for the widest kind of exercise in the
+// exercise list (most inputs per set), not just the ones in this workout, so adding, removing or
+// swapping exercises never changes its width; only the display settings do. A hidden copy of that
+// exercise is drawn as the last row (see renderExerciseList) and the columns are sized to fit it.
+let widthProbeExerciseId = null;
+
+function getWidthProbeExercise() {
+  let best = null;
+  let bestScore = -1;
+  Array.from(exerciseSelect.options).forEach((option) => {
+    if (!option.value) return;
+    const fields = normalizeFields(exerciseMetadataById[option.value]?.fields);
+    const tracksSets = fields.includes('sets') || fields.includes('reps');
+    const inputs = ['reps', 'weight', 'custom'].filter((field) => fields.includes(field)).length;
+    // Set controls (Add set, arrows, counter, set notes) outweigh any number of inputs
+    const score = (tracksSets ? 100 : 0) + inputs;
+    if (score > bestScore) {
+      best = option;
+      bestScore = score;
+    }
+  });
+  // With one set, so the columns leave room for the set controls even while real rows have none
+  return best ? createBuilderExercise(best.value, best.text, getExerciseOptionCategory(best), { withFirstSet: true }) : null;
+}
+
 // Render the exercise list dynamically, including intensity note field
 function renderExerciseList() {
   exerciseList.innerHTML = ''; // Clear the list
 
-  if (selectedExercises.length === 0) {
+  const isEmpty = selectedExercises.length === 0;
+  if (isEmpty) {
     const emptyRow = document.createElement('div');
     emptyRow.className = 'exercise-item exercise-empty';
     emptyRow.textContent = 'Add an exercise to get started';
     exerciseList.appendChild(emptyRow);
-    updateVolumeSummary();
-    return;
   }
 
-  selectedExercises.forEach((exercise, index) => {
+  const probe = fitBuilderWidth ? getWidthProbeExercise() : null;
+  widthProbeExerciseId = probe?.id || null;
+
+  [...selectedExercises, ...(probe ? [probe] : [])].forEach((exercise, index) => {
     const exerciseDiv = document.createElement('div');
     exerciseDiv.className = 'exercise-item';
+    if (exercise === probe) {
+      // Sizes the columns but is never seen or used
+      exerciseDiv.classList.add('wk-width-probe');
+      exerciseDiv.inert = true;
+      exerciseDiv.setAttribute('aria-hidden', 'true');
+    }
 
     // Follow the exercise's current settings, so a change in the exercise editor (e.g. unticking
     // reps) applies to exercises already in the builder
@@ -2971,14 +3717,10 @@ function renderExerciseList() {
       exercise.customLabel = metadata.customLabel;
     }
 
-    // Ensure sets list exists and enforce at least one set for exercises that track sets/reps
+    // Ensure the sets list exists; exercises that track sets may have none yet
     ensureSetsList(exercise);
     const fields = normalizeFields(exercise.fields);
     const showSetsReps = fields.includes('sets') || fields.includes('reps');
-    if (showSetsReps && (!Array.isArray(exercise.setsList) || exercise.setsList.length === 0)) {
-      exercise.setsList = [{ reps: '', weight: '', note: '', custom: '' }];
-      exercise.activeSetIndex = 0;
-    }
     const setsList = Array.isArray(exercise.setsList) ? exercise.setsList : [];
     const totalSets = setsList.length;
     const showReps = fields.includes('reps');
@@ -3018,8 +3760,12 @@ function renderExerciseList() {
       <div class="wk-sets"><span class="wk-set-lead" aria-hidden="true"></span>${allSetInputsHtml(set, offset + 1)}</div>
     </div>`).join('') : '';
 
-    const setControlsHtml = showAllSets
-      ? `<button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>${allSetInputsHtml(setsList[0] || {}, 0)}`
+    const addSetButtonHtml = `<button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>`;
+    // No sets yet: just the Add set button, no counter or inputs
+    const setControlsHtml = showSetsReps && totalSets === 0
+      ? addSetButtonHtml
+      : showAllSets
+      ? `${addSetButtonHtml}${allSetInputsHtml(setsList[0] || {}, 0)}`
       : showSetsReps ? `
       <button type="button" class="btn btn-secondary btn-sm add-set-btn" data-index="${index}">Add set</button>
       <button type="button" class="btn btn-sm btn-outline-secondary set-up-btn" data-index="${index}" ${activeSetIndex < totalSets - 1 ? '' : 'disabled'}>▲</button>
@@ -3049,6 +3795,12 @@ function renderExerciseList() {
     `;
     exerciseList.appendChild(exerciseDiv);
   });
+
+  if (isEmpty) {
+    alignExerciseColumns();
+    updateVolumeSummary();
+    return;
+  }
 
   // Add intensity field with intensity note (global for the workout, not per exercise)
   const intensityDiv = document.createElement('div');
@@ -3100,7 +3852,15 @@ function setupDraftListeners() {
     if (variationOption) {
       const exercise = selectedExercises[Number(variationOption.dataset.index)];
       if (exercise) {
-        exercise.variation = variationOption.dataset.variation;
+        // Two entries of one exercise can't share a variation; they'd be the same thing logged twice
+        const variation = variationOption.dataset.variation;
+        const clash = selectedExercises.some((other) => other !== exercise && other.id === exercise.id && (other.variation || '') === variation);
+        if (clash) {
+          showNotice(`${exercise.name}${variation ? ` – ${variation}` : ''} is already in this workout`, 'error');
+          variationOption.closest('.variation-menu')?.classList.add('hidden');
+          return;
+        }
+        exercise.variation = variation;
         saveWorkoutDraft();
         renderExerciseList();
       }
@@ -3417,7 +4177,10 @@ function addSetToExercise(exerciseIndex) {
 
   saveWorkoutDraft();
   renderExerciseList();
-  if (setsDisplayMode === 'all') {
+  // The first set's inputs have just appeared: put the cursor in the first one
+  if (exercise.setsList.length === 1) {
+    exerciseList.querySelectorAll('.exercise-item')[index]?.querySelector('.set-input[data-set-index="0"]')?.focus();
+  } else if (setsDisplayMode === 'all') {
     exerciseList.querySelectorAll('.exercise-item')[index]
       ?.querySelector(`.set-input[data-set-index="${exercise.setsList.length - 1}"]`)?.focus();
   }
@@ -3505,14 +4268,30 @@ const exerciseEditorSection = document.getElementById("exerciseeditor");
 const categorySelector = document.getElementById("categorySelector");
 const typeSelector = document.getElementById("typeSelector");
 const exerciseNotesSection = document.getElementById("exercisenotessection");
+const showRoutinesBtn = document.getElementById("showRoutinesBtn");
+const routinesPanel = document.getElementById("routinesPanel");
+const showCollectionsBtn = document.getElementById("showCollectionsBtn");
+const collectionsPanel = document.getElementById("collectionsPanel");
+const showVolumeTableBtn = document.getElementById("showVolumeTableBtn");
+const volumeTablePanel = document.getElementById("volumeTablePanel");
+
+// The Exercises section's panels and their toolbar buttons; only one is open at a time
+const addEditPanels = [
+  [toggleAddExerciseFormBtn, addExerciseFormWrapper],
+  [exoEditorBtn, exerciseEditorSection],
+  [showRoutinesBtn, routinesPanel],
+  [showCollectionsBtn, collectionsPanel],
+  [showVolumeTableBtn, volumeTablePanel]
+];
+
+function closeOtherAddEditPanels(keep) {
+  addEditPanels.forEach(([, panel]) => { if (panel !== keep) panel.classList.add("hidden"); });
+}
 
 // Reflect which panel is open: active toolbar buttons, and the exercise Save/Delete actions.
 function syncAddEditToolbar() {
-  const exerciseOpen = !exerciseEditorSection.classList.contains("hidden");
-  const addFormOpen = !addExerciseFormWrapper.classList.contains("hidden");
-  exoEditorBtn.classList.toggle("exo-btn-active", exerciseOpen);
-  toggleAddExerciseFormBtn.classList.toggle("exo-btn-active", addFormOpen);
-  exerciseActionButtons.classList.toggle("hidden", !exerciseOpen);
+  addEditPanels.forEach(([button, panel]) => button.classList.toggle("exo-btn-active", !panel.classList.contains("hidden")));
+  exerciseActionButtons.classList.toggle("hidden", exerciseEditorSection.classList.contains("hidden"));
 }
 
 // Briefly flash a button green as confirmation.
@@ -3538,9 +4317,8 @@ toggleFormBtn.addEventListener("click", () => {
   addEditToolbarButtons.classList.toggle("hidden", !isOpening);
 
   if (!isOpening) {
-    addExerciseFormWrapper.classList.add("hidden");
-    exerciseEditorSection.classList.add("hidden");
-  } else if (addExerciseFormWrapper.classList.contains("hidden") && exerciseEditorSection.classList.contains("hidden")) {
+    closeOtherAddEditPanels(null);
+  } else if (addEditPanels.every(([, panel]) => panel.classList.contains("hidden"))) {
     // Open on "Add Exercise" by default; clicking it also refreshes the library list
     toggleAddExerciseFormBtn.click();
   }
@@ -3550,16 +4328,58 @@ toggleFormBtn.addEventListener("click", () => {
 // Toggle Exercise Editor section
 exoEditorBtn.addEventListener("click", () => {
   exerciseEditorSection.classList.toggle("hidden");
-  addExerciseFormWrapper.classList.add("hidden");
+  closeOtherAddEditPanels(exerciseEditorSection);
   syncAddEditToolbar();
+  // If the volume table changed this exercise's contributions, show the new ones
+  if (!exerciseEditorSection.classList.contains("hidden") && volumeTableEditedIds.has(getCurrentExerciseId())) displayExercise();
+  volumeTableEditedIds.clear();
 });
+
+// Toggle the Routines panel (its contents are drawn by routines.js)
+showRoutinesBtn.addEventListener("click", () => {
+  routinesPanel.classList.toggle("hidden");
+  closeOtherAddEditPanels(routinesPanel);
+  syncAddEditToolbar();
+  if (!routinesPanel.classList.contains("hidden") && typeof resetRoutinesPanel === 'function') resetRoutinesPanel();
+});
+
+// Toggle the Collections panel (also drawn by routines.js)
+showCollectionsBtn.addEventListener("click", () => {
+  collectionsPanel.classList.toggle("hidden");
+  closeOtherAddEditPanels(collectionsPanel);
+  syncAddEditToolbar();
+  if (!collectionsPanel.classList.contains("hidden") && typeof resetCollectionsPanel === 'function') resetCollectionsPanel();
+});
+
+// Toggle the Volume table panel (every exercise's muscle group contributions, editable)
+showVolumeTableBtn.addEventListener("click", async () => {
+  volumeTablePanel.classList.toggle("hidden");
+  closeOtherAddEditPanels(volumeTablePanel);
+  syncAddEditToolbar();
+  if (!volumeTablePanel.classList.contains("hidden")) {
+    await ensureVolumeGroups();
+    renderVolumeMatrix();
+  }
+});
+
+// Opens Exercises → Routines (from the dropdown's "Create one" link) and scrolls to it
+function openRoutinesPanel() {
+  if (addEditToolbarButtons.classList.contains("hidden")) toggleFormBtn.click();
+  if (routinesPanel.classList.contains("hidden")) showRoutinesBtn.click();
+  routinesPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// Opens Exercises → Collections (from the dropdown's "Create one" link) and scrolls to it
+function openCollectionsPanel() {
+  if (addEditToolbarButtons.classList.contains("hidden")) toggleFormBtn.click();
+  if (collectionsPanel.classList.contains("hidden")) showCollectionsBtn.click();
+  collectionsPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 // Runs after the form's own toggle (registered earlier); opening the form closes both editors
 if (toggleAddExerciseFormBtn) {
   toggleAddExerciseFormBtn.addEventListener("click", () => {
-    if (!addExerciseFormWrapper.classList.contains("hidden")) {
-      exerciseEditorSection.classList.add("hidden");
-    }
+    if (!addExerciseFormWrapper.classList.contains("hidden")) closeOtherAddEditPanels(addExerciseFormWrapper);
     syncAddEditToolbar();
   });
 }
@@ -3758,7 +4578,10 @@ function checkLastWorkoutResult() {
           const input = document.getElementById('lastworkoutresult');
           const resultSection = document.getElementById('resultsection');
 
-          input.placeholder = `Add how you felt after your workout on ${date}`;
+          input.dataset.longPlaceholder = `Add how you felt after your workout on ${date}`;
+          input.dataset.shortPlaceholder = `How did ${date} feel?`;
+          input.title = input.dataset.longPlaceholder;
+          updateResultPlaceholder();
           input.dataset.key = workoutKey; // Save the key for use when saving
           resultSection.classList.remove('hidden');
         }

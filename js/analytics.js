@@ -84,6 +84,7 @@ document.getElementById("showCalendarBtn").addEventListener("click", async funct
     yearSelector.style.display = 'none';
     exerciseFilter.style.display = 'none';
     exerciseFilter.open = false;
+    document.getElementById('calendarDayCount').textContent = '';
   }
 });
 
@@ -373,6 +374,15 @@ const calendarStartMonthSelect = document.getElementById('calendarStartMonthSett
 let calendarWritableDays = false;
 let calendarNotes = {};
 const writableDaysCheckbox = document.getElementById('writableDaysSetting');
+// The "x of y days" text beside the exercise filter; saved as settings/calendar/showDayCount
+let showCalendarDayCount = true;
+const calendarDayCountCheckbox = document.getElementById('calendarDayCountSetting');
+
+function applyCalendarDayCountVisibility() {
+  const label = document.getElementById('calendarDayCount');
+  if (label) label.hidden = !showCalendarDayCount;
+  if (calendarDayCountCheckbox) calendarDayCountCheckbox.checked = showCalendarDayCount;
+}
 
 // Month layout shows "Start from month"; week layout shows "Start from week" and "End at"
 function syncCalendarStartControls() {
@@ -406,6 +416,8 @@ async function loadCalendarSettings() {
     calendarStartMonth = Math.min(12, Math.max(1, Math.trunc(Number(settings.startMonth)) || 1));
     if (calendarStartMonthSelect) calendarStartMonthSelect.value = String(calendarStartMonth);
     calendarWritableDays = settings.writableDays === true;
+    showCalendarDayCount = settings.showDayCount !== false;
+    applyCalendarDayCountVisibility();
     if (writableDaysCheckbox) writableDaysCheckbox.checked = calendarWritableDays;
     syncCalendarStartControls();
     if (calendarEndAtSelect) calendarEndAtSelect.value = showWholeYearCalendar ? 'yearEnd' : 'auto';
@@ -427,6 +439,19 @@ if (calendarLayoutSelect) {
       await database.ref('settings/calendar/layout').set(calendarLayout);
     } catch (error) {
       console.error('Error saving calendar layout:', error);
+    }
+  });
+}
+
+if (calendarDayCountCheckbox) {
+  calendarDayCountCheckbox.addEventListener('change', async () => {
+    await calendarSettingsReady;
+    showCalendarDayCount = calendarDayCountCheckbox.checked;
+    applyCalendarDayCountVisibility();
+    try {
+      await database.ref('settings/calendar/showDayCount').set(showCalendarDayCount);
+    } catch (error) {
+      console.error('Error saving day count setting:', error);
     }
   });
 }
@@ -763,7 +788,26 @@ function populateCalendarExerciseFilter(workoutsByDate) {
       ? calendarExerciseNames.map((name) => `<label><input type="checkbox" value="${escapeCalendarText(name)}"${calendarHiddenExercises.has(name) ? '' : ' checked'}> ${escapeCalendarText(name)}</label>`).join('')
       : '<div class="settings-empty">No exercises logged yet</div>';
   }
+  filterCalendarExerciseList();
   updateCalendarExerciseLabel();
+}
+
+// Hides exercises that don't contain the search text, like the exercise picker's search
+function filterCalendarExerciseList() {
+  const query = (document.getElementById('calendarExerciseSearch')?.value || '').trim().toLowerCase();
+  let anyMatch = false;
+  document.querySelectorAll('#calendarExerciseList label').forEach((label) => {
+    const matches = !query || label.textContent.toLowerCase().includes(query);
+    label.hidden = !matches;
+    if (matches) anyMatch = true;
+  });
+  const empty = document.getElementById('calendarExerciseEmpty');
+  if (empty) empty.hidden = anyMatch || calendarExerciseNames.length === 0;
+}
+
+// The checkboxes currently showing (all of them when there's no search)
+function getVisibleCalendarExerciseBoxes() {
+  return [...document.querySelectorAll('#calendarExerciseList label:not([hidden]) input[type="checkbox"]')];
 }
 
 function rerenderCalendarFromCache() {
@@ -784,11 +828,29 @@ if (calendarExerciseFilterElement) {
   calendarExerciseFilterElement.addEventListener('click', (event) => {
     const button = event.target.closest('[data-calendar-select]');
     if (!button) return;
+    // While searching, only the matching exercises are selected or deselected
     const selectAll = button.dataset.calendarSelect === 'all';
-    calendarHiddenExercises.clear();
-    if (!selectAll) calendarExerciseNames.forEach((name) => calendarHiddenExercises.add(name));
-    document.querySelectorAll('#calendarExerciseList input[type="checkbox"]').forEach((box) => { box.checked = selectAll; });
+    getVisibleCalendarExerciseBoxes().forEach((box) => {
+      box.checked = selectAll;
+      if (selectAll) calendarHiddenExercises.delete(box.value);
+      else calendarHiddenExercises.add(box.value);
+    });
     rerenderCalendarFromCache();
+  });
+  const calendarExerciseSearch = document.getElementById('calendarExerciseSearch');
+  calendarExerciseSearch?.addEventListener('input', filterCalendarExerciseList);
+  // Enter ticks or unticks the first match
+  calendarExerciseSearch?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    getVisibleCalendarExerciseBoxes()[0]?.click();
+  });
+  // Opening the list starts with an empty search box, ready to type in
+  calendarExerciseFilterElement.addEventListener('toggle', () => {
+    if (!calendarExerciseFilterElement.open || !calendarExerciseSearch) return;
+    calendarExerciseSearch.value = '';
+    filterCalendarExerciseList();
+    calendarExerciseSearch.focus();
   });
   // Close the list when clicking elsewhere or pressing Escape
   document.addEventListener('click', (event) => {
@@ -824,10 +886,44 @@ async function createCalendar(year = new Date().getFullYear()) {
   await renderCalendar(year, calendarWorkoutsCache);
 }
 
+// "x of y days this year": days with a workout matching the filter, out of the days so far
+// (the whole year for past years). When the current year's calendar starts later via the
+// start month / start week settings, counting starts there too ("since April", "since week 12").
+function updateCalendarDayCount(year, workoutsByDate) {
+  const label = document.getElementById('calendarDayCount');
+  if (!label) return;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isCurrentYear = year === today.getFullYear();
+  let firstDay = new Date(year, 0, 1);
+  let when = isCurrentYear ? 'this year' : `in ${year}`;
+  if (isCurrentYear && calendarLayout === 'horizontal' && calendarStartMonth > 1) {
+    firstDay = new Date(year, calendarStartMonth - 1, 1);
+    when = `since ${firstDay.toLocaleString('en', { month: 'long' })}`;
+  } else if (isCurrentYear && calendarLayout === 'vertical' && calendarStartWeek > 1) {
+    firstDay = getCalendarWeekStart(new Date(year, 0, 1));
+    firstDay.setDate(firstDay.getDate() + (calendarStartWeek - 1) * 7);
+    when = `since week ${calendarStartWeek}`;
+  }
+  const lastDay = isCurrentYear ? today : new Date(year, 11, 31);
+  if (firstDay > lastDay) {
+    label.textContent = ''; // nothing to count yet (a future year, or a start after today)
+    return;
+  }
+  let totalDays = 0;
+  let workoutDays = 0;
+  for (const date = new Date(firstDay); date <= lastDay; date.setDate(date.getDate() + 1)) {
+    totalDays++;
+    if (workoutsByDate[formatCalendarDate(date)]?.workouts.some(workoutMatchesCalendarFilter)) workoutDays++;
+  }
+  label.textContent = `${workoutDays} of ${totalDays} days ${when}`;
+}
+
 // Draw the calendar from already-loaded workouts
 async function renderCalendar(year, workoutsByDate) {
   const container = document.getElementById("calendar-container");
   if (!container) return;
+  updateCalendarDayCount(year, workoutsByDate);
 
   if (calendarLayout === 'vertical') {
     container.innerHTML = renderCalendarWeeksDown(await buildCalendarWeeks(year, undefined, workoutsByDate));

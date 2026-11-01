@@ -3128,7 +3128,7 @@ function buildVolumeRowHtml(group, weight) {
     </tr>`;
 }
 
-// Volume table (its own panel under Exercises): every exercise and variation against every muscle
+// Target Group Table (its own panel under Exercises): every exercise and variation against every muscle
 // group, each cell an editable contribution (0–1) saved when it's changed. A variation without
 // contributions of its own uses its exercise's default, shown as grey placeholders; editing one of
 // its cells first copies the defaults to it, since a variation with any of its own replaces the
@@ -4351,7 +4351,7 @@ showCollectionsBtn.addEventListener("click", () => {
   if (!collectionsPanel.classList.contains("hidden") && typeof resetCollectionsPanel === 'function') resetCollectionsPanel();
 });
 
-// Toggle the Volume table panel (every exercise's muscle group contributions, editable)
+// Toggle the Target Group Table panel (every exercise's muscle group contributions, editable)
 showVolumeTableBtn.addEventListener("click", async () => {
   volumeTablePanel.classList.toggle("hidden");
   closeOtherAddEditPanels(volumeTablePanel);

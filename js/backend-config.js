@@ -18,8 +18,8 @@ fetch(`${window.WORKOUT_BACKEND_ORIGIN}/healthz`, { mode: 'no-cors', cache: 'no-
 // state back with the one-time sign-in code, where it must match LOGIN_STATE_KEY (see below), so a
 // sign-in this browser didn't start is refused.
 const COGNITO_LOGIN = {
-  domain: 'https://eu-north-1yfjhnbg9i.auth.eu-north-1.amazoncognito.com',
-  clientId: '4j83477d02aci1uo2vnvrj70de',
+  domain: 'https://eu-north-1vpfqzk33w.auth.eu-north-1.amazoncognito.com',
+  clientId: '2pqh0m0uv7ul5hff6o7udo1v74',
   redirectUri: 'https://lean-backend.agreeableplant-a51f439e.northeurope.azurecontainerapps.io/callback'
 };
 const LOGIN_STATE_KEY = 'workoutLoginState';

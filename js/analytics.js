@@ -67,18 +67,23 @@ async function fetchWorkouts() {
 document.getElementById("showCalendarBtn").addEventListener("click", async function() {
   const calendarContainer = document.getElementById("calendar-container");
   const yearSelector = document.getElementById("calendar-year-filter");
-  
+  const exerciseFilter = document.getElementById('calendarExerciseFilter');
+
   if (calendarContainer.classList.contains('hidden') || calendarContainer.style.display === 'none') {
-    // Show calendar
+    // Show calendar, with the exercise filter back on All
+    calendarHiddenExercises.clear();
     const year = parseInt(yearSelector.value, 10);
     await createCalendar(year);
     calendarContainer.style.display = 'block';
     yearSelector.style.display = 'inline';
+    exerciseFilter.style.display = '';
   } else {
     // Hide calendar
     calendarContainer.innerHTML = '';
     calendarContainer.style.display = 'none';
     yearSelector.style.display = 'none';
+    exerciseFilter.style.display = 'none';
+    exerciseFilter.open = false;
   }
 });
 
@@ -555,8 +560,8 @@ const CALENDAR_DAY_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 // Edges are named for the weeks-down layout: left/right are neighbouring days in the
 // same week, top/bottom are the same weekday in neighbouring weeks.
 // firstVisibleWeek defaults to the start-week setting (current year only).
-async function buildCalendarWeeks(year, firstVisibleWeek) {
-  const workoutsByDate = await groupWorkoutsByDate();
+async function buildCalendarWeeks(year, firstVisibleWeek, workoutsByDate) {
+  workoutsByDate ??= await groupWorkoutsByDate();
   const weeks = [];
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -577,7 +582,11 @@ async function buildCalendarWeeks(year, firstVisibleWeek) {
       currentDate.setDate(weekStart.getDate() + day);
       const dateString = formatCalendarDate(currentDate);
 
-      const workoutData = workoutsByDate[dateString];
+      // Only workouts that pass the exercise filter colour the day, at their highest intensity
+      const shownWorkouts = (workoutsByDate[dateString]?.workouts || []).filter(workoutMatchesCalendarFilter);
+      const workoutData = shownWorkouts.length
+        ? { workouts: shownWorkouts, maxIntensity: Math.max(...shownWorkouts.map((workout) => Number(workout.intensity) || 5)) }
+        : undefined;
       let color;
 
       if (dateString === todayString && !workoutData) {
@@ -690,7 +699,7 @@ function renderCalendarMonths(weeks, year, firstMonth) {
       if (rowWeekNumbers[i / 7] === undefined) continue; // week outside the visible range
       if (i === 0 && dropLabels) {
         for (let col = 0; col < offset; col++) cells[col] = `<th>${CALENDAR_DAY_LABELS[col]}</th>`;
-        rows += `<tr><th class="calendar-week-number${nameInHeader ? '' : ' calendar-corner-below'}"></th>${cells.slice(0, 7).join('')}</tr>`;
+        rows += `<tr><th class="calendar-week-number">${rowWeekNumbers[0]}</th>${cells.slice(0, 7).join('')}</tr>`;
       } else {
         rows += `<tr><th class="calendar-week-number">${rowWeekNumbers[i / 7]}</th>${cells.slice(i, i + 7).join('')}</tr>`;
       }
@@ -707,10 +716,101 @@ function renderCalendarMonths(weeks, year, firstMonth) {
   return `<div class="calendar-months"><div class="calendar-months-row" style="--months-per-row:${perRow}">${months.join('')}</div></div>`;
 }
 
+// --- Exercise filter ---
+// Exercises are unticked by adding them to this set, so with nothing in it every
+// workout counts, including ones with no exercises logged.
+const calendarHiddenExercises = new Set();
+let calendarExerciseNames = []; // most-done first
+let calendarWorkoutsCache = null; // workouts from the last full load, reused when the filter changes
+
+function getWorkoutExerciseNames(workout) {
+  return Object.values(workout?.exercises || {})
+    .map((exercise) => String(exercise?.name ?? '').trim())
+    .filter(Boolean);
+}
+
+function workoutMatchesCalendarFilter(workout) {
+  if (calendarHiddenExercises.size === 0) return true;
+  return getWorkoutExerciseNames(workout).some((name) => !calendarHiddenExercises.has(name));
+}
+
+function updateCalendarExerciseLabel() {
+  const label = document.getElementById('calendarExerciseFilterLabel');
+  if (!label) return;
+  const shown = calendarExerciseNames.filter((name) => !calendarHiddenExercises.has(name));
+  let text = 'All';
+  if (calendarHiddenExercises.size > 0) {
+    if (shown.length === 0) text = 'None';
+    else if (shown.length === 1) text = shown[0];
+    else text = `${shown.length} of ${calendarExerciseNames.length}`;
+  }
+  label.textContent = `Exercises: ${text}`;
+}
+
+// Rebuild the checkbox list from every workout, most-done exercise first
+function populateCalendarExerciseFilter(workoutsByDate) {
+  const counts = new Map();
+  Object.values(workoutsByDate).forEach(({ workouts }) => workouts.forEach((workout) => {
+    new Set(getWorkoutExerciseNames(workout)).forEach((name) => counts.set(name, (counts.get(name) || 0) + 1));
+  }));
+  calendarExerciseNames = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
+  // Forget unticked exercises that no longer exist, so they can't hide everything
+  [...calendarHiddenExercises].forEach((name) => { if (!counts.has(name)) calendarHiddenExercises.delete(name); });
+
+  const list = document.getElementById('calendarExerciseList');
+  if (list) {
+    list.innerHTML = calendarExerciseNames.length
+      ? calendarExerciseNames.map((name) => `<label><input type="checkbox" value="${escapeCalendarText(name)}"${calendarHiddenExercises.has(name) ? '' : ' checked'}> ${escapeCalendarText(name)}</label>`).join('')
+      : '<div class="settings-empty">No exercises logged yet</div>';
+  }
+  updateCalendarExerciseLabel();
+}
+
+function rerenderCalendarFromCache() {
+  updateCalendarExerciseLabel();
+  if (!calendarWorkoutsCache) return;
+  renderCalendar(Number(document.getElementById('calendar-year-filter').value), calendarWorkoutsCache);
+}
+
+const calendarExerciseFilterElement = document.getElementById('calendarExerciseFilter');
+if (calendarExerciseFilterElement) {
+  calendarExerciseFilterElement.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('#calendarExerciseList input[type="checkbox"]');
+    if (!checkbox) return;
+    if (checkbox.checked) calendarHiddenExercises.delete(checkbox.value);
+    else calendarHiddenExercises.add(checkbox.value);
+    rerenderCalendarFromCache();
+  });
+  calendarExerciseFilterElement.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-calendar-select]');
+    if (!button) return;
+    const selectAll = button.dataset.calendarSelect === 'all';
+    calendarHiddenExercises.clear();
+    if (!selectAll) calendarExerciseNames.forEach((name) => calendarHiddenExercises.add(name));
+    document.querySelectorAll('#calendarExerciseList input[type="checkbox"]').forEach((box) => { box.checked = selectAll; });
+    rerenderCalendarFromCache();
+  });
+  // Close the list when clicking elsewhere or pressing Escape
+  document.addEventListener('click', (event) => {
+    if (calendarExerciseFilterElement.open && !calendarExerciseFilterElement.contains(event.target)) {
+      calendarExerciseFilterElement.open = false;
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && calendarExerciseFilterElement.open) {
+      calendarExerciseFilterElement.open = false;
+      calendarExerciseFilterElement.querySelector('summary').focus();
+    }
+  });
+}
+
 async function createCalendar(year = new Date().getFullYear()) {
   await calendarSettingsReady;
   const container = document.getElementById("calendar-container");
   if (!container) return;
+
+  calendarWorkoutsCache = await groupWorkoutsByDate();
+  populateCalendarExerciseFilter(calendarWorkoutsCache);
 
   container.classList.toggle('calendar-writable', calendarWritableDays);
   if (calendarWritableDays) {
@@ -721,8 +821,16 @@ async function createCalendar(year = new Date().getFullYear()) {
     }
   }
 
+  await renderCalendar(year, calendarWorkoutsCache);
+}
+
+// Draw the calendar from already-loaded workouts
+async function renderCalendar(year, workoutsByDate) {
+  const container = document.getElementById("calendar-container");
+  if (!container) return;
+
   if (calendarLayout === 'vertical') {
-    container.innerHTML = renderCalendarWeeksDown(await buildCalendarWeeks(year));
+    container.innerHTML = renderCalendarWeeksDown(await buildCalendarWeeks(year, undefined, workoutsByDate));
     return;
   }
 
@@ -730,7 +838,7 @@ async function createCalendar(year = new Date().getFullYear()) {
   const firstMonth = year === new Date().getFullYear() ? calendarStartMonth - 1 : 0;
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
   const firstWeek = Math.round((getCalendarWeekStart(new Date(year, firstMonth, 1)) - getCalendarWeekStart(new Date(year, 0, 1))) / msPerWeek) + 1;
-  container.innerHTML = renderCalendarMonths(await buildCalendarWeeks(year, firstWeek), year, firstMonth);
+  container.innerHTML = renderCalendarMonths(await buildCalendarWeeks(year, firstWeek, workoutsByDate), year, firstMonth);
 }
 
 

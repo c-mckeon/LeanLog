@@ -3,8 +3,8 @@
 // builder's exercise dropdown (see renderExercisePickerOptions in app.js).
 //
 //   Routines    routines/{id}     Pick one in the dropdown and press Add: all its exercises load.
-//   Collections collections/{id}  Groups of exercises kept out of the regular dropdown (e.g. rehab
-//                                 or stretches); they're picked one at a time from Collections mode.
+//   Collections collections/{id}  Additional exercise groupings (e.g. rehab or stretches);
+//                                 exercises remain available in the regular dropdown too.
 //
 // Both are stored as { name, exercises: [{ id, name }], updatedAt }. The exercise name is kept so
 // a list still reads sensibly if one of its exercises is later deleted.
@@ -16,10 +16,12 @@ function normalizeListExercises(exercises) {
     .map((exercise) => ({ id: exercise.id, name: String(exercise.name || '').trim() }));
 }
 
-// Every exercise in the dropdown, by category then name
-function getListExerciseChoices() {
+// Every exercise in the dropdown, by category then name. Collection-only exercises are offered
+// only when editing a collection, not as routine-template entries.
+function getListExerciseChoices(includeCollectionOnly = false) {
   return Array.from(exerciseSelect.options)
     .filter((option) => option.value)
+    .filter((option) => includeCollectionOnly || option.dataset.collectionOnly !== 'true')
     .map((option) => ({ id: option.value, name: option.text, category: getExerciseOptionCategory(option) }))
     .sort((a, b) => a.category.localeCompare(b.category, undefined, { sensitivity: 'base' })
       || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
@@ -44,7 +46,6 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
     saveBtn: $(`save${Key}Btn`),
     deleteBtn: $(`delete${Key}Btn`),
     newBtn: $(`new${Key}Btn`),
-    // Collections only: create a new exercise straight into the list
     newExerciseInput: $(`${key}NewExerciseInput`),
     newExerciseBtn: $(`${key}NewExerciseBtn`),
     newExerciseFields: $(`${key}NewExerciseTrackFields`)
@@ -71,6 +72,7 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
     }
     renderExercisePickerOptions();
     renderList();
+    renderEditor();
   }
 
   function showHint(message) {
@@ -166,7 +168,7 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
     const included = new Set(draft.exercises.map((exercise) => exercise.id));
     el.exerciseSelect.replaceChildren(new Option(addPlaceholder, ''));
     let group = null;
-    getListExerciseChoices().forEach((choice) => {
+    getListExerciseChoices(key === 'collection').forEach((choice) => {
       if (included.has(choice.id)) return;
       if (!group || group.label !== choice.category) {
         group = document.createElement('optgroup');
@@ -313,9 +315,6 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
     if (await persist(name)) showNotice(`Saved ${name}`, 'success');
   });
 
-  // New exercise straight into the list. It's created right away (under the list's name as its
-  // category, tracking what's ticked under the name box) and the list is saved with it, so the
-  // exercise never shows up loose in the main exercise list.
   async function addNewExercise() {
     if (!draft || !el.newExerciseInput) return;
     const exerciseName = el.newExerciseInput.value.trim();
@@ -323,17 +322,22 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
     const listName = checkName();
     if (!listName) return;
     if (getExistingExerciseNames().has(exerciseName.toLowerCase())) {
-      showHint(`You already have "${exerciseName}". Move it in with the dropdown below instead.`);
+      showHint(`You already have "${exerciseName}". Add the existing exercise with the dropdown below.`);
       return el.newExerciseInput.focus();
     }
 
     el.newExerciseBtn.disabled = true;
     try {
       const created = await postToWorkoutApi('/api/exercises', {
-        name: exerciseName, category: listName, variations: [], focusAreas: [], ...readTrackFields(el.newExerciseFields)
+        name: exerciseName,
+        category: listName,
+        variations: [],
+        focusAreas: [],
+        collectionOnly: key === 'collection',
+        ...readTrackFields(el.newExerciseFields)
       });
       draft.exercises.push({ id: created.id, name: exerciseName });
-      await loadExercises(); // so the new exercise is in the dropdowns
+      await loadExercises();
       if (typeof refreshExerciseEditor === 'function') refreshExerciseEditor();
       if (await persist(listName)) {
         showNotice(`Added ${exerciseName} to ${listName}`, 'success');
@@ -377,7 +381,7 @@ function createExerciseListManager({ key, noun, addPlaceholder = 'Add exerciseâ€
 }
 
 const routineLists = createExerciseListManager({ key: 'routine', noun: 'routine' });
-const collectionLists = createExerciseListManager({ key: 'collection', noun: 'collection', addPlaceholder: 'Or move in an existing exerciseâ€¦' });
+const collectionLists = createExerciseListManager({ key: 'collection', noun: 'collection', addPlaceholder: 'Add an existing exerciseâ€¦' });
 
 // ---- Used by app.js ----
 
@@ -394,11 +398,6 @@ function getRoutinePickerEntries() {
 // Collections mode of the exercise dropdown: each collection and its exercise ids, in order
 function getCollectionPickerEntries() {
   return collectionLists.getSorted().map((collection) => ({ id: collection.id, name: collection.name, exerciseIds: collection.exercises.map((exercise) => exercise.id) }));
-}
-
-// Exercises that belong to a collection, kept out of the regular dropdown modes
-function getCollectionExerciseIds() {
-  return new Set(collectionLists.getSorted().flatMap((collection) => collection.exercises.map((exercise) => exercise.id)));
 }
 
 // Pressing Add with a routine picked: all its exercises go into the workout builder

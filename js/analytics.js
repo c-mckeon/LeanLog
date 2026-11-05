@@ -76,14 +76,18 @@ document.getElementById("showCalendarBtn").addEventListener("click", async funct
     await createCalendar(year);
     calendarContainer.style.display = 'block';
     yearSelector.style.display = 'inline';
-    exerciseFilter.style.display = '';
+    syncCalendarModeControls();
   } else {
     // Hide calendar
+    await flushInjuryNoteSave();
     calendarContainer.innerHTML = '';
     calendarContainer.style.display = 'none';
     yearSelector.style.display = 'none';
-    exerciseFilter.style.display = 'none';
     exerciseFilter.open = false;
+    setCalendarBrush(null);
+    openCalendarHue(null);
+    calendarColorBarOpen = false;
+    syncCalendarModeControls();
     document.getElementById('calendarDayCount').textContent = '';
   }
 });
@@ -608,21 +612,7 @@ async function buildCalendarWeeks(year, firstVisibleWeek, workoutsByDate) {
       const dateString = formatCalendarDate(currentDate);
 
       // Only workouts that pass the exercise filter colour the day, at their highest intensity
-      const shownWorkouts = (workoutsByDate[dateString]?.workouts || []).filter(workoutMatchesCalendarFilter);
-      const workoutData = shownWorkouts.length
-        ? { workouts: shownWorkouts, maxIntensity: Math.max(...shownWorkouts.map((workout) => Number(workout.intensity) || 5)) }
-        : undefined;
-      let color;
-
-      if (dateString === todayString && !workoutData) {
-        color = 'rgb(255, 255, 146)';
-      } else if (currentDate < today && !workoutData) {
-        color = 'rgb(233, 233, 233)';
-      } else if (workoutData) {
-        color = getIntensityColor(workoutData.maxIntensity);
-      } else {
-        color = 'rgb(255, 255, 255)';
-      }
+      const color = getCalendarDayColor(dateString, workoutsByDate, todayString);
 
       const firstOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       const lastOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
@@ -650,10 +640,338 @@ function renderCalendarDayCell(day, sides) {
     .filter((edge) => day.monthEdges[edge])
     .map((edge) => `border-${sides[edge]}:2px solid black`);
   const borderStyle = borders.length ? `${borders.join(';')};` : '';
-  const note = calendarWritableDays
+  const note = calendarShowsNoteInputs()
     ? `<input type="text" class="calendar-note" data-date="${day.dateString}" maxlength="80" aria-label="Note for ${day.dateString}" value="${escapeCalendarText(calendarNotes[day.dateString] || '')}">`
     : '';
-  return `<td data-date="${day.dateString}" title="${day.dateString}" style="background-color:${day.color};border:1px solid grey;${borderStyle}">${note}</td>`;
+  const classes = [];
+  if (injuryMonitorActive && injuryNotes[day.dateString]) classes.push('has-injury-note');
+  if (injuryMonitorActive && day.dateString === injurySelectedDate) classes.push('is-selected');
+  const classAttr = classes.length ? ` class="${classes.join(' ')}"` : '';
+  return `<td data-date="${day.dateString}"${classAttr} title="${day.dateString}" style="background-color:${day.color};border:1px solid grey;${borderStyle}">${note}</td>`;
+}
+
+// --- Injury monitor and day colours ---
+// The injury monitor is the same calendar without workout colours. Clicking a day there shows
+// its note (injuryMonitor/notes/<date>) in the box under the calendar. Either calendar's days
+// can be painted; the colours are kept apart (calendarColors/<date>, injuryMonitor/colors/<date>).
+let injuryMonitorActive = false;
+let injurySelectedDate = formatCalendarDate(new Date());
+let injuryNotes = {};
+let injuryDayColors = {};
+let calendarDayColors = {};
+let calendarBrush = null; // null = not painting, '' = remove colour, '#rrggbb' = paint
+let calendarColorBarOpen = false;
+let injuryNoteSaveTimer = null;
+const CALENDAR_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+
+// Inline notes are a normal-calendar setting; the injury monitor uses the box below instead
+function calendarShowsNoteInputs() {
+  return calendarWritableDays && !injuryMonitorActive;
+}
+
+function getActiveDayColors() {
+  return injuryMonitorActive ? injuryDayColors : calendarDayColors;
+}
+
+function getActiveDayColorPath(date) {
+  return injuryMonitorActive ? `injuryMonitor/colors/${date}` : `calendarColors/${date}`;
+}
+
+// Keep only well-formed colours, since they go straight into a style attribute
+function cleanCalendarColors(colors) {
+  return Object.fromEntries(Object.entries(colors || {}).filter(([, color]) => CALENDAR_COLOR_PATTERN.test(color)));
+}
+
+// A day's colour with nothing painted on it: green for a workout matching the exercise filter
+// (normal calendar only), yellow for today, grey for past days, white for later ones
+function getCalendarDefaultDayColor(dateString, workoutsByDate, todayString = formatCalendarDate(new Date())) {
+  const hasWorkout = !injuryMonitorActive
+    && (workoutsByDate?.[dateString]?.workouts || []).some(workoutMatchesCalendarFilter);
+  if (hasWorkout) return getIntensityColor();
+  if (dateString === todayString) return 'rgb(255, 255, 146)';
+  if (dateString < todayString) return 'rgb(233, 233, 233)';
+  return 'rgb(255, 255, 255)';
+}
+
+function getCalendarDayColor(dateString, workoutsByDate, todayString) {
+  return getActiveDayColors()[dateString] || getCalendarDefaultDayColor(dateString, workoutsByDate, todayString);
+}
+
+// Show the controls that belong to the open calendar
+function syncCalendarModeControls() {
+  const open = document.getElementById('calendar-container')?.style.display !== 'none';
+  const exerciseFilter = document.getElementById('calendarExerciseFilter');
+  if (exerciseFilter) {
+    exerciseFilter.style.display = open && !injuryMonitorActive ? '' : 'none';
+    if (injuryMonitorActive) exerciseFilter.open = false;
+  }
+  const injuryButton = document.getElementById('injuryMonitorBtn');
+  if (injuryButton) {
+    injuryButton.style.display = open ? '' : 'none';
+    injuryButton.setAttribute('aria-pressed', String(injuryMonitorActive));
+  }
+  const colorButton = document.getElementById('calendarColorBtn');
+  if (colorButton) {
+    colorButton.style.display = open ? '' : 'none';
+    colorButton.setAttribute('aria-pressed', String(calendarColorBarOpen));
+  }
+  const colorBar = document.getElementById('calendarColorBar');
+  if (colorBar) colorBar.hidden = !(open && calendarColorBarOpen);
+  const notePanel = document.getElementById('injuryNotePanel');
+  if (notePanel) notePanel.hidden = !(open && injuryMonitorActive);
+  if (open && injuryMonitorActive) showInjuryNote(injurySelectedDate);
+}
+
+// `swatch` is the control that chose the colour, highlighted while it is in use
+function setCalendarBrush(color, swatch = null) {
+  calendarBrush = color;
+  document.querySelectorAll('#calendarColorBar .calendar-swatch').forEach((element) => {
+    const active = color !== null && element === swatch;
+    element.classList.toggle('is-active', active);
+    if (element.tagName === 'BUTTON') element.setAttribute('aria-pressed', String(active));
+  });
+  document.getElementById('calendar-container')?.classList.toggle('calendar-painting', color !== null);
+}
+
+async function paintCalendarDay(cell) {
+  const date = cell.dataset.date;
+  const colors = getActiveDayColors();
+  const previous = colors[date];
+  const color = calendarBrush || undefined;
+  if (previous === color) return;
+  const path = getActiveDayColorPath(date);
+  if (color) colors[date] = color;
+  else delete colors[date];
+  cell.style.backgroundColor = getCalendarDayColor(date, calendarWorkoutsCache);
+  try {
+    if (color) await database.ref(path).set(color);
+    else await database.ref(path).remove();
+  } catch (error) {
+    if (previous) colors[date] = previous;
+    else delete colors[date];
+    cell.style.backgroundColor = getCalendarDayColor(date, calendarWorkoutsCache);
+    console.error('Error saving day colour:', error);
+  }
+}
+
+function formatInjuryNoteDate(date) {
+  return new Date(`${date}T00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function showInjuryNote(date) {
+  const textarea = document.getElementById('injuryNoteText');
+  const label = document.getElementById('injuryNoteLabel');
+  if (!textarea) return;
+  if (textarea.dataset.date !== date) {
+    textarea.dataset.date = date;
+    textarea.value = injuryNotes[date] || '';
+    document.getElementById('injuryNoteStatus').textContent = '';
+  }
+  if (label) label.textContent = `Note for ${formatInjuryNoteDate(date)}`;
+}
+
+async function selectInjuryDay(date) {
+  await flushInjuryNoteSave();
+  injurySelectedDate = date;
+  document.querySelectorAll('#calendar-container td.is-selected').forEach((cell) => cell.classList.remove('is-selected'));
+  document.querySelector(`#calendar-container td[data-date="${date}"]`)?.classList.add('is-selected');
+  showInjuryNote(date);
+}
+
+// Saves the note box to the day it is showing; an empty note is deleted
+async function saveInjuryNote() {
+  clearTimeout(injuryNoteSaveTimer);
+  injuryNoteSaveTimer = null;
+  const textarea = document.getElementById('injuryNoteText');
+  const status = document.getElementById('injuryNoteStatus');
+  const date = textarea?.dataset.date;
+  if (!date) return;
+  const text = textarea.value.trim();
+  if (text === (injuryNotes[date] || '')) return;
+  try {
+    const noteRef = database.ref(`injuryMonitor/notes/${date}`);
+    if (text) {
+      await noteRef.set(text);
+      injuryNotes[date] = text;
+    } else {
+      await noteRef.remove();
+      delete injuryNotes[date];
+    }
+    document.querySelector(`#calendar-container td[data-date="${date}"]`)?.classList.toggle('has-injury-note', Boolean(text));
+    if (textarea.dataset.date === date) status.textContent = 'Saved';
+  } catch (error) {
+    if (textarea.dataset.date === date) status.textContent = "Couldn't save";
+    console.error('Error saving injury note:', error);
+  }
+}
+
+function flushInjuryNoteSave() {
+  return injuryNoteSaveTimer ? saveInjuryNote() : Promise.resolve();
+}
+
+const injuryNoteTextarea = document.getElementById('injuryNoteText');
+if (injuryNoteTextarea) {
+  injuryNoteTextarea.addEventListener('input', () => {
+    document.getElementById('injuryNoteStatus').textContent = '';
+    clearTimeout(injuryNoteSaveTimer);
+    injuryNoteSaveTimer = setTimeout(saveInjuryNote, 800);
+  });
+  injuryNoteTextarea.addEventListener('change', saveInjuryNote);
+}
+
+document.getElementById('injuryMonitorBtn')?.addEventListener('click', async () => {
+  await flushInjuryNoteSave();
+  injuryMonitorActive = !injuryMonitorActive;
+  syncCalendarModeControls();
+  await rerenderCalendarIfOpen();
+});
+
+document.getElementById('calendarColorBtn')?.addEventListener('click', () => {
+  calendarColorBarOpen = !calendarColorBarOpen;
+  if (!calendarColorBarOpen) {
+    setCalendarBrush(null);
+    openCalendarHue(null);
+  }
+  syncCalendarModeControls();
+});
+
+// Six main colours; clicking one opens a row of its six shades, light to strong. Stored as #rrggbb.
+// Hand-picked clean scales (Tailwind's 50-500); yellow starts a step lighter so its strongest shade isn't mustard
+const CALENDAR_SWATCH_HUES = [
+  ['Red', ['#fef2f2', '#fee2e2', '#fecaca', '#fca5a5', '#f87171', '#ef4444']],
+  ['Orange', ['#fff7ed', '#ffedd5', '#fed7aa', '#fdba74', '#fb923c', '#f97316']],
+  ['Yellow', ['#fefdf0', '#fefce8', '#fef9c3', '#fef08a', '#fde047', '#facc15']],
+  ['Green', ['#f0fdf4', '#dcfce7', '#bbf7d0', '#86efac', '#4ade80', '#22c55e']],
+  ['Blue', ['#eff6ff', '#dbeafe', '#bfdbfe', '#93c5fd', '#60a5fa', '#3b82f6']],
+  ['Purple', ['#faf5ff', '#f3e8ff', '#e9d5ff', '#d8b4fe', '#c084fc', '#a855f7']]
+];
+const CALENDAR_MAIN_SHADE = 3; // the shade shown on the main colour, and picked when it opens
+
+// Shades for a colour from the system picker: its hue and saturation at these lightnesses
+// (close to the main colours' scales), with the exact pick in the slot nearest its own lightness
+const CALENDAR_CUSTOM_LIGHTNESS = [97, 93, 87, 78, 68, 58];
+
+function hexToHsl(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+  if (!delta) return [0, 0, lightness * 100];
+  const saturation = delta / (1 - Math.abs(2 * lightness - 1));
+  let hue;
+  if (max === r) hue = ((g - b) / delta) % 6;
+  else if (max === g) hue = (b - r) / delta + 2;
+  else hue = (r - g) / delta + 4;
+  return [(hue * 60 + 360) % 360, saturation * 100, lightness * 100];
+}
+
+function hslToHex(hue, saturation, lightness) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const channel = (n) => {
+    const k = (n + hue / 30) % 12;
+    const value = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(value * 255).toString(16).padStart(2, '0');
+  };
+  return `#${channel(0)}${channel(8)}${channel(4)}`;
+}
+
+function getCustomCalendarShades(hex) {
+  const [hue, saturation, lightness] = hexToHsl(hex);
+  const shades = CALENDAR_CUSTOM_LIGHTNESS.map((level) => hslToHex(hue, saturation, level));
+  let picked = 0;
+  CALENDAR_CUSTOM_LIGHTNESS.forEach((level, index) => {
+    if (Math.abs(level - lightness) < Math.abs(CALENDAR_CUSTOM_LIGHTNESS[picked] - lightness)) picked = index;
+  });
+  shades[picked] = hex.toLowerCase();
+  return { shades, picked };
+}
+
+const calendarHueRow = document.getElementById('calendarHueRow');
+const calendarShadeRow = document.getElementById('calendarShadeRow');
+const calendarCustomInput = document.getElementById('calendarCustomColor');
+if (calendarHueRow) {
+  calendarHueRow.innerHTML = CALENDAR_SWATCH_HUES.map(([name, shades], index) => {
+    const color = shades[CALENDAR_MAIN_SHADE];
+    return `<button type="button" class="calendar-hue" data-hue-index="${index}" style="--swatch: ${color};" title="${name}" aria-label="${name}" aria-expanded="false" aria-controls="calendarShadeRow"></button>`;
+  }).join('');
+}
+
+// Open the shade row for a main colour (its index) or the picker's colour ('custom'), or close
+// it with null. Returns the shade to start painting with.
+function openCalendarHue(index) {
+  calendarHueRow?.querySelectorAll('.calendar-hue').forEach((button) => {
+    const open = Number(button.dataset.hueIndex) === index;
+    button.classList.toggle('is-open', open);
+    button.setAttribute('aria-expanded', String(open));
+  });
+  calendarCustomInput?.classList.toggle('is-open', index === 'custom');
+  if (!calendarShadeRow) return null;
+  calendarShadeRow.hidden = index === null;
+  if (index === null) {
+    calendarShadeRow.innerHTML = '';
+    return null;
+  }
+  let name = 'Custom';
+  let shades;
+  let start = CALENDAR_MAIN_SHADE;
+  if (index === 'custom') {
+    ({ shades, picked: start } = getCustomCalendarShades(calendarCustomInput.value));
+  } else {
+    [name, shades] = CALENDAR_SWATCH_HUES[index];
+  }
+  calendarShadeRow.innerHTML = shades.map((color, shade) => {
+    const label = `${name}, shade ${shade + 1} of ${shades.length}`;
+    return `<button type="button" class="calendar-swatch" data-color="${color}" style="--swatch: ${color};" title="${label}" aria-label="${label}"></button>`;
+  }).join('');
+  return calendarShadeRow.querySelectorAll('.calendar-swatch')[start] || null;
+}
+
+// Open a colour's shades and start painting with its starting shade
+function startCalendarHue(index) {
+  const shade = openCalendarHue(index);
+  if (shade) setCalendarBrush(shade.dataset.color, shade);
+}
+
+const calendarColorBar = document.getElementById('calendarColorBar');
+if (calendarColorBar) {
+  calendarColorBar.addEventListener('click', (event) => {
+    // A main colour opens its shades and starts painting with the middle one;
+    // clicking the open one again closes them and stops painting
+    const hueButton = event.target.closest('button.calendar-hue');
+    if (hueButton) {
+      if (hueButton.classList.contains('is-open')) {
+        openCalendarHue(null);
+        setCalendarBrush(null);
+      } else {
+        startCalendarHue(Number(hueButton.dataset.hueIndex));
+      }
+      return;
+    }
+    const swatch = event.target.closest('button.calendar-swatch');
+    if (!swatch) return;
+    // Clicking the chosen swatch again stops painting
+    if (swatch.classList.contains('is-active')) setCalendarBrush(null);
+    else setCalendarBrush(swatch.dataset.color, swatch);
+    // The eraser isn't a colour, so it closes the open main colour (its ring and shades)
+    if (swatch.classList.contains('calendar-swatch-clear')) openCalendarHue(null);
+  });
+  // The rainbow circle opens the system colour picker; its colour gets shades like a main colour,
+  // with the exact pick chosen
+  const useCustomColor = () => startCalendarHue('custom');
+  calendarCustomInput?.addEventListener('click', useCustomColor);
+  calendarCustomInput?.addEventListener('input', useCustomColor);
+}
+
+// Clicking a day paints it while a colour is chosen, and in the injury monitor opens its note
+if (document.getElementById('calendar-container')) {
+  document.getElementById('calendar-container').addEventListener('click', (event) => {
+    const cell = event.target.closest('td[data-date]');
+    if (!cell) return;
+    if (calendarBrush !== null) paintCalendarDay(cell);
+    if (injuryMonitorActive) selectInjuryDay(cell.dataset.date);
+  });
 }
 
 function escapeCalendarText(text) {
@@ -713,7 +1031,7 @@ function renderCalendarMonths(weeks, year, firstMonth) {
     const name = new Date(year, month, 1).toLocaleString('en', { month: 'long' });
     // Months starting Thursday to Sunday (Wednesday to Sunday with the wider writable cells) have
     // room for the name in the top row, in place of the grey block, which saves a row.
-    const nameInHeader = dropLabels && offset >= (calendarWritableDays ? 2 : 3);
+    const nameInHeader = dropLabels && offset >= (calendarShowsNoteInputs() ? 2 : 3);
     const corner = nameInHeader
       ? `<th class="calendar-month-name" colspan="${offset + 1}">${name}</th>`
       : `<th class="calendar-week-number"${dropLabels ? ` colspan="${offset + 1}"` : ''}></th>`;
@@ -735,7 +1053,7 @@ function renderCalendarMonths(weeks, year, firstMonth) {
   // normal = up to 6, in as few rows as possible (7 = 4+3, 11 = 6+5); writable days = 3.
   // On narrower screens the months then wrap evenly (5+5+2) instead of each row
   // splitting on its own (5+1, 5+1).
-  const perRow = calendarWritableDays
+  const perRow = calendarShowsNoteInputs()
     ? Math.min(3, months.length)
     : Math.ceil(months.length / Math.ceil(months.length / 6));
   return `<div class="calendar-months"><div class="calendar-months-row" style="--months-per-row:${perRow}">${months.join('')}</div></div>`;
@@ -874,16 +1192,33 @@ async function createCalendar(year = new Date().getFullYear()) {
   calendarWorkoutsCache = await groupWorkoutsByDate();
   populateCalendarExerciseFilter(calendarWorkoutsCache);
 
-  container.classList.toggle('calendar-writable', calendarWritableDays);
-  if (calendarWritableDays) {
+  container.classList.toggle('calendar-writable', calendarShowsNoteInputs());
+  container.classList.toggle('calendar-injury', injuryMonitorActive);
+  if (calendarShowsNoteInputs()) {
     try {
       calendarNotes = (await database.ref('calendarNotes').once('value')).val() || {};
     } catch (error) {
       console.error('Error loading calendar notes:', error);
     }
   }
+  try {
+    if (injuryMonitorActive) {
+      await flushInjuryNoteSave();
+      const injuryData = (await database.ref('injuryMonitor').once('value')).val() || {};
+      injuryNotes = injuryData.notes || {};
+      injuryDayColors = cleanCalendarColors(injuryData.colors);
+      // Make the note box reload its text from the fresh notes
+      const noteBox = document.getElementById('injuryNoteText');
+      if (noteBox) delete noteBox.dataset.date;
+    } else {
+      calendarDayColors = cleanCalendarColors((await database.ref('calendarColors').once('value')).val());
+    }
+  } catch (error) {
+    console.error('Error loading calendar colours and notes:', error);
+  }
 
   await renderCalendar(year, calendarWorkoutsCache);
+  if (injuryMonitorActive) syncCalendarModeControls();
 }
 
 // "x of y days this year": days with a workout matching the filter, out of the days so far
@@ -892,6 +1227,10 @@ async function createCalendar(year = new Date().getFullYear()) {
 function updateCalendarDayCount(year, workoutsByDate) {
   const label = document.getElementById('calendarDayCount');
   if (!label) return;
+  if (injuryMonitorActive) {
+    label.textContent = ''; // workout days aren't shown in the injury monitor
+    return;
+  }
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const isCurrentYear = year === today.getFullYear();
@@ -927,6 +1266,7 @@ async function renderCalendar(year, workoutsByDate) {
 
   if (calendarLayout === 'vertical') {
     container.innerHTML = renderCalendarWeeksDown(await buildCalendarWeeks(year, undefined, workoutsByDate));
+    alignCalendarBars();
     return;
   }
 
@@ -935,6 +1275,35 @@ async function renderCalendar(year, workoutsByDate) {
   const msPerWeek = 7 * 24 * 60 * 60 * 1000;
   const firstWeek = Math.round((getCalendarWeekStart(new Date(year, firstMonth, 1)) - getCalendarWeekStart(new Date(year, 0, 1))) / msPerWeek) + 1;
   container.innerHTML = renderCalendarMonths(await buildCalendarWeeks(year, firstWeek, workoutsByDate), year, firstMonth);
+  alignCalendarBars();
+}
+
+// The bars above the calendar span the page, but the calendar is centred and narrower. Pad the
+// bars so their left and right ends line up with the calendar's. Re-measured whenever the
+// calendar changes size (a render, a window resize, showing or hiding it).
+function alignCalendarBars() {
+  const container = document.getElementById('calendar-container');
+  const bars = [document.getElementById('showcal'), document.getElementById('calendarColorBar')].filter(Boolean);
+  // Nothing to measure while the calendar is hidden; the observer runs again once it shows
+  const parts = container?.offsetWidth ? [...container.querySelectorAll('.calendar-month, .calendar-weeks-down')] : [];
+  if (!parts.length) {
+    bars.forEach((bar) => { bar.style.paddingLeft = ''; bar.style.paddingRight = ''; });
+    return;
+  }
+  const left = Math.min(...parts.map((part) => part.getBoundingClientRect().left));
+  const right = Math.max(...parts.map((part) => part.getBoundingClientRect().right));
+  bars.forEach((bar) => {
+    const box = bar.getBoundingClientRect();
+    // A hidden bar has no box; measure against the calendar container instead
+    const barLeft = box.width ? box.left : container.getBoundingClientRect().left;
+    const barRight = box.width ? box.right : container.getBoundingClientRect().right;
+    bar.style.paddingLeft = `${Math.max(0, Math.round(left - barLeft))}px`;
+    bar.style.paddingRight = `${Math.max(0, Math.round(barRight - right))}px`;
+  });
+}
+
+if (window.ResizeObserver && document.getElementById('calendar-container')) {
+  new ResizeObserver(alignCalendarBars).observe(document.getElementById('calendar-container'));
 }
 
 

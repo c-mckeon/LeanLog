@@ -433,13 +433,9 @@ function renderExercisePickerOptions() {
     return;
   }
 
-  // Exercises in a collection only show in Collections mode (while that mode is switched on)
-  const inCollections = showCollectionsInDropdown && typeof getCollectionExerciseIds === 'function'
-    ? getCollectionExerciseIds()
-    : new Set();
   Array.from(exerciseSelect.children).forEach((entry) => {
     const options = entry.tagName === 'OPTGROUP' ? Array.from(entry.children) : [entry];
-    const validOptions = options.filter((option) => option.value && !inCollections.has(option.value));
+    const validOptions = options.filter((option) => option.value && option.dataset.collectionOnly !== 'true');
     if (!validOptions.length) return;
     if (entry.tagName === 'OPTGROUP') appendPickerHeading(entry.label);
     validOptions.forEach(appendPickerExerciseOption);
@@ -901,7 +897,8 @@ function setCategoryHint(hint, message) {
 
 function countExercisesInCategory(category) {
   const bucket = getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {};
-  return Object.values(bucket).filter((exercise) => typeof exercise?.name === 'string' && exercise.name.trim()).length;
+  return Object.values(bucket).filter((exercise) =>
+    !exercise?.collectionOnly && typeof exercise?.name === 'string' && exercise.name.trim()).length;
 }
 
 // The separator and the two manage options at the end of a category dropdown
@@ -1238,6 +1235,7 @@ document.getElementById('addExerciseForm').addEventListener('submit', async (eve
     renderNewExerciseModel();
     renderNewExerciseTargets();
     await loadExercises();
+    if (typeof reloadExerciseLists === 'function') reloadExerciseLists();
     refreshExerciseEditor();
     if (window.refreshTrackedExercises) window.refreshTrackedExercises();
     collapseAddEditSection();
@@ -1259,8 +1257,11 @@ const librarySearch = document.getElementById('librarySearch');
 const libraryList = document.getElementById('libraryList');
 const librarySelection = document.getElementById('librarySelection');
 const libraryVariations = document.getElementById('libraryVariations');
+const libraryTargets = document.getElementById('libraryTargets');
+const libraryTargetDetails = document.getElementById('libraryTargetDetails');
 const addLibraryExerciseBtn = document.getElementById('addLibraryExerciseBtn');
 let selectedLibraryExercise = null;
+let libraryTargetValues = {};
 
 function setAddExerciseMode(mode) {
   const fromLibrary = mode === 'library';
@@ -1278,7 +1279,7 @@ function getExistingExerciseNames() {
   const names = new Set();
   Object.values(exerciseCatalogByCategory || {}).forEach((categoryExercises) => {
     Object.values(categoryExercises || {}).forEach((exercise) => {
-      if (typeof exercise?.name === 'string') names.add(exercise.name.trim().toLowerCase());
+      if (!exercise?.collectionOnly && typeof exercise?.name === 'string') names.add(exercise.name.trim().toLowerCase());
     });
   });
   return names;
@@ -1326,7 +1327,7 @@ document.querySelectorAll('[data-variations-explainer]').forEach((slot) => {
   if (template) slot.replaceChildren(template.content.cloneNode(true));
 });
 
-// "Track" for new exercises (Create your own, and new exercises in a collection): a tick box per
+// "Track" for new exercises (Create your own and collection-only exercises): a tick box per
 // field, sets + reps + weight ticked to start; ticking Custom shows a box to name it ("Floors")
 const TRACK_FIELD_LABELS = { sets: 'Sets', reps: 'Reps', weight: 'Weight', custom: 'Custom' };
 const DEFAULT_TRACK_FIELDS = ['sets', 'reps', 'weight'];
@@ -1384,6 +1385,8 @@ function selectLibraryExercise(name) {
   librarySelection.hidden = !selectedLibraryExercise;
   renderLibraryList();
   if (!selectedLibraryExercise) return;
+  libraryTargetValues = { ...(selectedLibraryExercise.targets || {}) };
+  libraryTargetDetails.open = false;
 
   document.getElementById('librarySelectedName').textContent = selectedLibraryExercise.name;
   document.getElementById('librarySelectedCategory').textContent = `${selectedLibraryExercise.category} · ${describeLibraryExerciseFields(selectedLibraryExercise)}`;
@@ -1392,7 +1395,53 @@ function selectLibraryExercise(name) {
   libraryVariations.innerHTML = values.length
     ? `<div class="library-variation-group">${values.map((value) => `<label class="library-chip"><input type="checkbox" value="${escapeExerciseHtml(value)}"> ${escapeExerciseHtml(value)}</label>`).join('')}</div>`
     : '<p class="exo-hint">No common variations for this one.</p>';
+  renderLibraryTargets(selectedLibraryExercise);
 }
+
+async function renderLibraryTargets(entry) {
+  libraryTargets.innerHTML = '<p class="exo-hint">Loading muscle groups…</p>';
+  await ensureVolumeGroups();
+  if (selectedLibraryExercise !== entry) return;
+
+  const groups = [...volumeMuscleGroups, ...Object.keys(entry.targets || {})]
+    .filter((group, index, all) => all.findIndex((candidate) => candidate.toLowerCase() === group.toLowerCase()) === index);
+  if (!groups.length) {
+    libraryTargets.innerHTML = '<p class="exo-hint">No muscle groups are set up yet.</p>';
+    return;
+  }
+  groups.forEach((group) => {
+    const source = Object.keys(libraryTargetValues).find((name) => name.toLowerCase() === group.toLowerCase());
+    if (source && source !== group) {
+      libraryTargetValues[group] = libraryTargetValues[source];
+      delete libraryTargetValues[source];
+    }
+  });
+  libraryTargets.innerHTML = `
+    <table class="exo-volume-table">
+      <thead><tr><th>Muscle group</th><th>Contribution</th></tr></thead>
+      <tbody>${groups.map((group) => `
+        <tr><td>${escapeExerciseHtml(group)}</td>
+          <td><input type="number" class="library-target-input form-control form-control-sm"
+            data-group="${escapeExerciseHtml(group)}" min="0" max="1" step="0.05" placeholder="0"
+            value="${libraryTargetValues[group] > 0 ? libraryTargetValues[group] : ''}"
+            aria-label="Default contribution for ${escapeExerciseHtml(group)}"></td></tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+libraryTargets.addEventListener('input', (event) => {
+  const input = event.target.closest('.library-target-input');
+  if (!input) return;
+  let weight = input.value === '' ? 0 : Number(input.value);
+  if (!Number.isFinite(weight)) weight = 0;
+  weight = Math.min(Math.max(weight, 0), 1);
+  input.value = weight > 0 ? String(weight) : '';
+  if (weight > 0) {
+    libraryTargetValues[input.dataset.group] = weight;
+  } else {
+    delete libraryTargetValues[input.dataset.group];
+  }
+});
 
 // A library entry's variations as a flat list (older entries grouped them by type)
 function getLibraryVariations(entry) {
@@ -1420,6 +1469,31 @@ function findLibraryEntryByName(name) {
   return key ? (window.EXERCISE_LIBRARY || []).find((entry) => looseExerciseKey(entry.name) === key) || null : null;
 }
 
+async function getLibraryExerciseVolumeMappings(entry) {
+  await ensureVolumeGroups();
+  const originalGroups = [...volumeMuscleGroups];
+  const mappings = Object.entries(libraryTargetValues)
+    .filter(([group, weight]) => typeof group === 'string' && Number.isFinite(Number(weight)) && Number(weight) > 0)
+    .map(([group, weight]) => {
+      let muscleGroup = volumeMuscleGroups.find((existing) => existing.toLowerCase() === group.toLowerCase());
+      if (!muscleGroup) {
+        muscleGroup = group;
+        volumeMuscleGroups.push(muscleGroup);
+      }
+      return { variation: '', muscleGroup, weight: Math.min(Number(weight), 1) };
+    });
+
+  if (volumeMuscleGroups.length !== originalGroups.length) {
+    try {
+      await saveVolumeGroups();
+    } catch (error) {
+      volumeMuscleGroups = originalGroups;
+      throw error;
+    }
+  }
+  return mappings;
+}
+
 // "Demo ↗": a demonstration page (ExRx.net) in a new tab; hidden when there isn't one
 function setDemoLink(anchor, url) {
   if (!anchor) return;
@@ -1445,11 +1519,13 @@ async function addSelectedLibraryExercise() {
       renderExerciseCategoryOptions();
     }
     const { fields, customLabel } = getLibraryExerciseFields(selectedLibraryExercise);
-    await postToWorkoutApi('/api/exercises', { name, category, variations, focusAreas: [], fields, customLabel });
+    const volumeMappings = await getLibraryExerciseVolumeMappings(selectedLibraryExercise);
+    await postToWorkoutApi('/api/exercises', { name, category, variations, focusAreas: [], fields, customLabel, volumeMappings });
     selectedLibraryExercise = null;
     librarySelection.hidden = true;
     if (librarySearch) librarySearch.value = '';
     await loadExercises();
+    if (typeof reloadExerciseLists === 'function') reloadExerciseLists();
     refreshExerciseEditor();
     if (window.refreshTrackedExercises) window.refreshTrackedExercises();
     collapseAddEditSection();
@@ -1560,8 +1636,8 @@ function getSettingsRef() {
 // Settings → Exercises → "Routines": the Routines mode in the exercise dropdown (settings/workoutBuilder/showRoutines)
 let showRoutinesInDropdown = true;
 const showRoutinesCheckbox = document.getElementById('showRoutinesSetting');
-// Settings → Exercises → "Collections" (settings/workoutBuilder/showCollections). Off hides the
-// Collections mode and puts collection exercises back in the regular lists.
+// Settings → Exercises → "Collections" (settings/workoutBuilder/showCollections). Off hides only
+// the Collections mode; collection members remain in the regular exercise lists.
 let showCollectionsInDropdown = true;
 const showCollectionsCheckbox = document.getElementById('showCollectionsSetting');
 
@@ -1702,8 +1778,7 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
   Object.keys(exerciseMetadataById).forEach(key => delete exerciseMetadataById[key]);
 
   const groupByCategory = workoutBuilderGroupingMode === EXERCISE_GROUPING_MODE.CATEGORY;
-  // The saved categories plus any other category that holds exercises (e.g. a collection's own
-  // exercises, filed under the collection's name), so no exercise is left out of the list
+  // The saved categories plus any other category that holds exercises, so none are left out.
   const listedCategories = new Set(exerciseCategories.map(normalizeCategoryName));
   const validCategories = [...exerciseCategories, ...Object.keys(exercises).filter((category) => !listedCategories.has(normalizeCategoryName(category)))]
     .filter(category => category && typeof category === "string" && category.trim())
@@ -1740,12 +1815,14 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
           exerciseMetadataById[exerciseId] = {
             fields: exerciseFields,
             customLabel: categoryExercises[exerciseId]?.customLabel || '',
-            variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations)
+            variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations),
+            collectionOnly: categoryExercises[exerciseId]?.collectionOnly === true
           };
         const option = document.createElement("option");
         option.value = exerciseId;
         option.textContent = name;
         option.dataset.category = category;
+        if (categoryExercises[exerciseId]?.collectionOnly === true) option.dataset.collectionOnly = 'true';
         optgroup.appendChild(option);
       });
 
@@ -1776,12 +1853,14 @@ function renderExerciseDropdown(exercises, frequencyMap = {}, fromFocusAreas = f
       exerciseMetadataById[exerciseId] = {
         fields: exerciseFields,
         customLabel: categoryExercises[exerciseId]?.customLabel || '',
-        variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations)
+        variations: normalizeExerciseVariations(categoryExercises[exerciseId]?.variations),
+        collectionOnly: categoryExercises[exerciseId]?.collectionOnly === true
       };
       const option = document.createElement("option");
       option.value = exerciseId;
       option.textContent = name;
       option.dataset.category = category;
+      if (categoryExercises[exerciseId]?.collectionOnly === true) option.dataset.collectionOnly = 'true';
       exerciseSelect.appendChild(option);
     });
   }
@@ -1814,7 +1893,7 @@ showCollectionsCheckbox?.addEventListener('change', async () => {
     await setWorkoutBuilderGroupingMode(EXERCISE_GROUPING_MODE.FREQUENCY, true);
     loadExercises();
   } else {
-    renderExercisePickerOptions(); // collection exercises join or leave the regular lists
+    renderExercisePickerOptions();
   }
   try {
     await getSettingsRef().update({ showCollections: showCollectionsInDropdown });
@@ -2435,6 +2514,7 @@ function loadCategories() {
   categories.forEach((category) => {
     Object.entries(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {}).forEach(([id, exercise]) => {
       if (exercise && typeof exercise.name === 'string' && exercise.name.trim()) {
+        if (exercise.collectionOnly) return;
         exerciseDataMap[id] = exercise;
         exerciseCategoryById[id] = category;
       }
@@ -3085,7 +3165,7 @@ function displayExercise() {
   detailsSection.innerHTML = `
     <h3>Exercise Details</h3>
     <div class="exo-field">
-      <label for="exercise_name">Name${findLibraryEntryByName(data.name)?.link ? ` <a class="exo-demo-link" href="${escapeExerciseHtml(findLibraryEntryByName(data.name).link)}" target="_blank" rel="noopener noreferrer" title="Demonstration on ExRx.net (opens in a new tab)">Demo ↗</a>` : ''}</label>
+      <label for="exercise_name">Name</label>
       <input type="text" id="exercise_name" value="${escapeExerciseHtml(data.name)}">
     </div>
     <div class="exo-field">
@@ -3106,6 +3186,9 @@ function displayExercise() {
       <p class="exo-hint">Select which fields to track for this exercise.</p>
       ${Object.entries(trackedFieldLabels).map(([value, label]) =>
         `<label><input type="checkbox" class="field-checkbox" value="${value}" ${fields.includes(value) ? 'checked' : ''}> ${label}</label>`).join('\n      ')}
+      ${findLibraryEntryByName(data.name)?.link
+        ? `<a class="exo-demo-link exercise-editor-demo-link" href="${escapeExerciseHtml(findLibraryEntryByName(data.name).link)}" target="_blank" rel="noopener noreferrer" title="Demonstration on ExRx.net (opens in a new tab)">Demo ↗</a>`
+        : ''}
     </div>
     <div id="customFieldContainer" class="exo-field" style="${fields.includes('custom') ? '' : 'display:none;'}">
       <label for="exercise_custom_label">Custom field label</label>
@@ -3145,7 +3228,7 @@ function renderVolumeMatrix() {
   const groups = new Set(volumeMuscleGroups);
   orderedCategories.forEach((category) => {
     const exercises = Object.entries(getExerciseCategoryBucket(exerciseCatalogByCategory, category) || {})
-      .filter(([, exercise]) => exercise && typeof exercise.name === 'string' && exercise.name.trim())
+      .filter(([, exercise]) => exercise && !exercise.collectionOnly && typeof exercise.name === 'string' && exercise.name.trim())
       .sort(([, a], [, b]) => a.name.localeCompare(b.name));
     exercises.forEach(([id, exercise]) => {
       const mappings = normalizeVolumeMappings(exercise.volumeMappings);
@@ -3241,7 +3324,6 @@ function renderVolumeTracking() {
     ensureVolumeGroups().then(renderVolumeTracking);
     return;
   }
-
   const weights = {};
   editorVolumeMappings
     .filter((mapping) => mapping.variation === currentVariation)
@@ -4717,14 +4799,3 @@ bootstrapPrivateApp();
   kg.addEventListener('input', () => { lbs.value = kg.value === '' ? '' : fmt(parseFloat(kg.value) * 2.2046226218); });
   lbs.addEventListener('input', () => { kg.value = lbs.value === '' ? '' : fmt(parseFloat(lbs.value) / 2.2046226218); });
 })();
-
-
-
-
-
-
-
-
-
-
-

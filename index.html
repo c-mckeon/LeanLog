@@ -6,7 +6,7 @@
   <title> LeanLog Workout Tracker</title>
   <script src="js/backend-config.js"></script>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-rbsA2VBKQhggwzxH7pPCaAqO46MgnOM80zW1RWuH61DGLwZJEdK2Kadq2F9CUG65" crossorigin="anonymous">
-  <link rel="stylesheet" crossorigin href="./assets/index-DFLSM_Ns.css">
+  <link rel="stylesheet" crossorigin href="./assets/index-KL6TMArA.css">
 </head>
 <body>
   <!-- One-time consent on first sign-in (GDPR). cognito-session.js shows it; the backend records it
@@ -136,8 +136,7 @@
           <input type="checkbox" id="showRoutinesSetting" checked>
           <span>Routine templates</span>
         </label>
-        <!-- Saved as settings/workoutBuilder/showCollections; off = no Collections mode, and collection
-             exercises go back into the regular dropdown lists -->
+        <!-- Saved as settings/workoutBuilder/showCollections; off = no Collections mode -->
         <label class="settings-checkbox-row" for="showCollectionsSetting">
           <input type="checkbox" id="showCollectionsSetting" checked>
           <span>Collections</span>
@@ -398,6 +397,11 @@
                   <div id="libraryVariations"></div>
                   <p class="exo-hint library-variation-hint">Tick any you want to track separately, or none; you can add more later in the Exercise Editor.</p>
                 </details>
+                <details id="libraryTargetDetails" class="exo-variations-details library-target-details">
+                  <summary>Muscle group contributions</summary>
+                  <p class="exo-hint">Edit how much this exercise counts towards each muscle group. These defaults are saved with the exercise.</p>
+                  <div id="libraryTargets"></div>
+                </details>
                 <button type="button" id="addLibraryExerciseBtn" class="exo-btn exo-btn-primary">Add exercise</button>
               </div>
             </div>
@@ -457,7 +461,7 @@
                 </div>
                 <div id="newExerciseModelVariations" class="exo-add-model-variations"></div>
                 <h4 class="exo-add-model-heading">Target groups <small>(volume tracking)</small></h4>
-                <p class="exo-hint">How much each muscle group counts for this exercise: 1 = primary, lower = assisting. Leave blank for none. Applies to every variation; you can set variations separately later in the Exercise Editor.</p>
+                <p class="exo-hint">Contribution per muscle group: 1 = primary; 0.25–0.75 = assisting; leave blank (0) for none. Variations inherit these values unless you set their own in the Exercise Editor. If all are blank, Volume Tracking won’t count this exercise toward any muscle group.</p>
                 <div id="newExerciseTargets"></div>
               </aside>
 
@@ -529,12 +533,12 @@
           </div>
         </div>
 
-        <!-- Collections: groups of exercises kept out of the regular exercise dropdown (routines.js) -->
+        <!-- Collections: additional groupings of regular exercises (routines.js) -->
         <div id="collectionsPanel" class="hidden exo-card routines-card">
           <div class="exo-add-header">
             <div>
               <h3>Collections</h3>
-              <p class="exo-hint">For exercises you only need now and then, like rehab or stretches. Exercises in a collection stay out of the main exercise list and show under <strong>Collections</strong> in the exercise dropdown instead.</p>
+              <p class="exo-hint">Group exercises for a purpose, like rehab or stretches. Collection membership is additional: exercises remain in the main exercise list and also appear under <strong>Collections</strong>.</p>
             </div>
           </div>
           <div class="routines-layout">
@@ -547,16 +551,16 @@
               <label for="collectionNameInput" class="routine-label">Name</label>
               <input type="text" id="collectionNameInput" class="form-control form-control-sm" maxlength="60" placeholder="e.g. Shin splints" autocomplete="off">
               <div id="collectionHint" class="field-hint field-hint-error" role="alert" hidden></div>
-              <label for="collectionNewExerciseInput" class="routine-label">Exercises</label>
-              <!-- Main way in: a new exercise that only exists in this collection -->
+              <span class="routine-label">Exercises</span>
+              <p class="exo-hint">Create exercises just for this collection, or add existing exercises from your main list. Existing exercises stay in the main list.</p>
               <div class="routine-new-row">
-                <input type="text" id="collectionNewExerciseInput" class="form-control form-control-sm" maxlength="60" placeholder="New exercise, e.g. Heel walk" autocomplete="off">
+                <input type="text" id="collectionNewExerciseInput" class="form-control form-control-sm" maxlength="60" placeholder="New collection exercise, e.g. Heel walk" autocomplete="off">
                 <button type="button" id="collectionNewExerciseBtn" class="exo-btn exo-btn-sm exo-btn-primary">Add</button>
               </div>
-              <div id="collectionNewExerciseTrackFields" class="track-fields track-fields-compact" aria-label="What the new exercise tracks"></div>
+              <div id="collectionNewExerciseTrackFields" class="track-fields track-fields-compact" aria-label="What the new collection exercise tracks"></div>
               <ol id="collectionExerciseList" class="routine-exercise-list"></ol>
               <div class="routine-add-row">
-                <select id="collectionExerciseSelect" class="form-control form-control-sm" aria-label="Move an existing exercise into this collection"></select>
+                <select id="collectionExerciseSelect" class="form-control form-control-sm" aria-label="Add an existing exercise to this collection"></select>
               </div>
               <div class="routine-actions">
                 <button type="button" id="saveCollectionBtn" class="exo-btn exo-btn-primary">Save collection</button>
@@ -768,9 +772,29 @@
         </div>
       </details>
       <span id="calendarDayCount" class="calendar-day-count" aria-live="polite"></span>
+      <!-- Injury monitor: the same calendar without workout colours; clicking a day opens its note below.
+           Both buttons sit at the right end of the bar. -->
+      <button type="button" id="injuryMonitorBtn" class="period-select calendar-toggle-btn calendar-bar-end" aria-pressed="false" style="display: none;">Injury monitor</button>
+      <button type="button" id="calendarColorBtn" class="period-select calendar-toggle-btn" aria-pressed="false" aria-controls="calendarColorBar" style="display: none;">Color days</button>
     </div>
-    
+    <!-- Day colours: pick a swatch, then click days to paint them. Each calendar keeps its own colours
+         (calendarColors/<date> and injuryMonitor/colors/<date>). -->
+    <div id="calendarColorBar" class="col-12 calendar-color-bar" role="toolbar" aria-label="Day colour" hidden>
+      <!-- Six main colours (filled in by analytics.js); clicking one opens its shades beside them -->
+      <span class="calendar-color-hint">Pick a colour, then click days:</span>
+      <div id="calendarHueRow" class="calendar-hue-row"></div>
+      <input type="color" id="calendarCustomColor" class="calendar-swatch calendar-swatch-custom" value="#7dd3fc" title="Any colour" aria-label="Pick any colour">
+      <button type="button" class="calendar-swatch calendar-swatch-clear" data-color="" title="Remove colour" aria-label="Remove colour">&times;</button>
+      <div id="calendarShadeRow" class="calendar-shade-row" hidden></div>
+    </div>
+
     <div id="calendar-container" style="padding-top: 20px; display: none;"></div>
+
+    <div id="injuryNotePanel" class="col-12 injury-note-panel" hidden>
+      <label for="injuryNoteText" id="injuryNoteLabel" class="settings-label">Note</label>
+      <textarea id="injuryNoteText" class="form-control" rows="4" maxlength="2000" placeholder="How did it feel today?"></textarea>
+      <span id="injuryNoteStatus" class="injury-note-status" aria-live="polite"></span>
+    </div>
   </div>
 
   
@@ -1064,14 +1088,6 @@ body {
   <script src="js/sectionTabs.js" defer></script>
 </body>
 </html>
-
-
-
-
-
-
-
-
 
 
 

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Android crops this to a circle or rounded square, so it fills the square and the dumbbell
+       sits in the middle 80%. Source for icon-maskable-512.png -->
+  <rect width="24" height="24" fill="#1a5fd0"/>
+  <g transform="translate(12 12) scale(0.72) translate(-12 -12)">
+    <path d="M4 10v4M6.5 7.5v9M17.5 7.5v9M20 10v4M6.5 12h11" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>
